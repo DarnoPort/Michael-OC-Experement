@@ -1,6 +1,8 @@
 #include "syscalls.h"
 #include "memory.h"
 #include "paging.h"
+#include "process.h"
+#include "vfs.h"
 
 extern void print_char(char c, unsigned char color);
 extern void print_string(const char* str, unsigned char color);
@@ -10,9 +12,6 @@ extern void load_tss(void);
 extern void enter_user_mode(unsigned int eip, unsigned int esp);
 
 extern char stack_top;
-extern char user_program_start;
-extern char user_program_end;
-
 volatile unsigned int user_return_esp = 0;
 
 struct tss32 {
@@ -57,20 +56,43 @@ struct syscall_registers {
 };
 
 static struct tss32 tss;
-static unsigned int user_code_physical = VM_ALLOC_FAIL;
-static unsigned int user_stack_physical = VM_ALLOC_FAIL;
 
-static void copy_user_program(unsigned int physical) {
-    volatile unsigned char* destination =
-        (volatile unsigned char*)physical;
-    const unsigned char* source =
-        (const unsigned char*)&user_program_start;
-    const unsigned char* end =
-        (const unsigned char*)&user_program_end;
-
-    while (source < end) {
-        *destination++ = *source++;
+static int copy_user_path(
+    unsigned int directory,
+    unsigned int address,
+    char* path,
+    unsigned int path_size
+) {
+    if (!path || path_size < 2U) {
+        return 0;
     }
+
+    for (unsigned int i = 0; i < path_size - 1U; i++) {
+        unsigned char character;
+
+        if (address > 0xFFFFFFFFU - i ||
+            !paging_read_user_memory(
+                directory,
+                address + i,
+                &character,
+                1
+            )) {
+            return 0;
+        }
+
+        path[i] = (char)character;
+
+        if (character == '\0') {
+            return 1;
+        }
+    }
+
+    path[path_size - 1U] = '\0';
+    return 0;
+}
+
+void syscall_set_kernel_stack(unsigned int stack_top) {
+    tss.esp0 = stack_top;
 }
 
 int syscall_init(void) {
@@ -88,51 +110,7 @@ int syscall_init(void) {
     );
     load_tss();
 
-    user_code_physical = phys_alloc_page();
-    user_stack_physical = phys_alloc_page();
-
-    if (user_code_physical == VM_ALLOC_FAIL ||
-        user_stack_physical == VM_ALLOC_FAIL) {
-        if (user_code_physical != VM_ALLOC_FAIL) {
-            phys_free_page(user_code_physical);
-        }
-
-        if (user_stack_physical != VM_ALLOC_FAIL) {
-            phys_free_page(user_stack_physical);
-        }
-
-        user_code_physical = VM_ALLOC_FAIL;
-        user_stack_physical = VM_ALLOC_FAIL;
-        return 0;
-    }
-
-    copy_user_program(user_code_physical);
-
-    if (!paging_map_user_page(
-            USER_CODE_BASE,
-            user_code_physical,
-            PAGE_PRESENT
-        )) {
-        phys_free_page(user_code_physical);
-        phys_free_page(user_stack_physical);
-        user_code_physical = VM_ALLOC_FAIL;
-        user_stack_physical = VM_ALLOC_FAIL;
-        return 0;
-    }
-
-    if (!paging_map_user_page(
-            USER_STACK_BASE,
-            user_stack_physical,
-            PAGE_PRESENT | PAGE_WRITABLE
-        )) {
-        paging_unmap_user_page(USER_CODE_BASE);
-        phys_free_page(user_code_physical);
-        phys_free_page(user_stack_physical);
-        user_code_physical = VM_ALLOC_FAIL;
-        user_stack_physical = VM_ALLOC_FAIL;
-        return 0;
-    }
-
+    scheduler_init();
     return 1;
 }
 
@@ -158,29 +136,351 @@ int syscall_dispatch(void* registers_ptr) {
         return 0;
     }
 
-    if (registers->eax == SYS_EXIT) {
-        print_string("\n[syscall] user program exited.\n", 0x0E);
+    if (registers->eax == SYS_GETPID) {
+        int pid = scheduler_current_pid();
+
+        registers->eax =
+            (pid < 0) ? 0xFFFFFFFFU : (unsigned int)pid;
+        return 0;
+    }
+
+    if (registers->eax == SYS_SBRK) {
+        unsigned int old_break;
+
+        if (!process_sbrk(
+                registers->ebx,
+                &old_break
+            )) {
+            registers->eax = 0xFFFFFFFFU;
+        } else {
+            registers->eax = old_break;
+        }
+
+        return 0;
+    }
+
+    if (registers->eax == SYS_OPEN) {
+        char path[VFS_PATH_MAX];
+        struct vfs_file* file;
+        unsigned int flags;
+        int fd;
+
+        if (!copy_user_path(
+                scheduler_current_cr3(),
+                registers->ebx,
+                path,
+                sizeof(path)
+            )) {
+            registers->eax = 0xFFFFFFFFU;
+            return 0;
+        }
+
+        flags = registers->ecx &
+            (VFS_O_READ |
+             VFS_O_WRITE |
+             VFS_O_CREATE |
+             VFS_O_TRUNC);
+
+        if (!(flags & (VFS_O_READ | VFS_O_WRITE))) {
+            registers->eax = 0xFFFFFFFFU;
+            return 0;
+        }
+
+        file = vfs_open(path, flags);
+
+        if (!file) {
+            registers->eax = 0xFFFFFFFFU;
+            return 0;
+        }
+
+        fd = process_fd_install(file);
+
+        if (fd < 0) {
+            vfs_close(file);
+            registers->eax = 0xFFFFFFFFU;
+            return 0;
+        }
+
+        registers->eax = (unsigned int)fd;
+        return 0;
+    }
+
+    if (registers->eax == SYS_FILE_READ) {
+        struct vfs_file* file =
+            process_fd_get((int)registers->ebx);
+        unsigned int directory =
+            scheduler_current_cr3();
+        unsigned int remaining =
+            registers->edx;
+        unsigned int destination =
+            registers->ecx;
+        unsigned char buffer[256];
+        unsigned int total = 0;
+
+        if (!file ||
+            remaining == 0 ||
+            remaining > 4096U ||
+            !paging_user_range_valid_in_directory(
+                directory,
+                destination,
+                remaining,
+                1
+            )) {
+            registers->eax = 0xFFFFFFFFU;
+            return 0;
+        }
+
+        while (remaining > 0) {
+            unsigned int chunk =
+                remaining > sizeof(buffer)
+                    ? sizeof(buffer)
+                    : remaining;
+            int result =
+                vfs_read(
+                    file,
+                    buffer,
+                    chunk
+                );
+
+            if (result < 0) {
+                if (total == 0) {
+                    registers->eax = 0xFFFFFFFFU;
+                } else {
+                    registers->eax = total;
+                }
+                return 0;
+            }
+
+            if (result == 0) {
+                break;
+            }
+
+            if (!paging_write_user_memory(
+                    directory,
+                    destination + total,
+                    buffer,
+                    (unsigned int)result
+                )) {
+                registers->eax =
+                    total == 0
+                        ? 0xFFFFFFFFU
+                        : total;
+                return 0;
+            }
+
+            total += (unsigned int)result;
+            remaining -= (unsigned int)result;
+
+            if ((unsigned int)result < chunk) {
+                break;
+            }
+        }
+
+        registers->eax = total;
+        return 0;
+    }
+
+    if (registers->eax == SYS_FILE_WRITE) {
+        struct vfs_file* file =
+            process_fd_get((int)registers->ebx);
+        unsigned int directory =
+            scheduler_current_cr3();
+        unsigned int remaining =
+            registers->edx;
+        unsigned int source =
+            registers->ecx;
+        unsigned char buffer[256];
+        unsigned int total = 0;
+
+        if (!file ||
+            remaining == 0 ||
+            remaining > 4096U ||
+            !paging_user_range_valid_in_directory(
+                directory,
+                source,
+                remaining,
+                0
+            )) {
+            registers->eax = 0xFFFFFFFFU;
+            return 0;
+        }
+
+        while (remaining > 0) {
+            unsigned int chunk =
+                remaining > sizeof(buffer)
+                    ? sizeof(buffer)
+                    : remaining;
+
+            if (!paging_read_user_memory(
+                    directory,
+                    source + total,
+                    buffer,
+                    chunk
+                )) {
+                registers->eax =
+                    total == 0
+                        ? 0xFFFFFFFFU
+                        : total;
+                return 0;
+            }
+
+            {
+                int result =
+                    vfs_write(
+                        file,
+                        buffer,
+                        chunk
+                    );
+
+                if (result < 0) {
+                    registers->eax =
+                        total == 0
+                            ? 0xFFFFFFFFU
+                            : total;
+                    return 0;
+                }
+
+                total += (unsigned int)result;
+                remaining -= (unsigned int)result;
+
+                if ((unsigned int)result < chunk) {
+                    break;
+                }
+            }
+        }
+
+        registers->eax = total;
+        return 0;
+    }
+
+    if (registers->eax == SYS_CLOSE) {
+        registers->eax =
+            process_fd_close((int)registers->ebx)
+                ? 0U
+                : 0xFFFFFFFFU;
+        return 0;
+    }
+
+    if (registers->eax == SYS_YIELD) {
         registers->eax = 0;
-        return 1;
+        return 2;
+    }
+
+    if (registers->eax == SYS_EXIT) {
+        print_string("\n[syscall] user process exited.\n", 0x0E);
+        process_exit_current();
+        registers->eax = 0;
+        return 2;
     }
 
     registers->eax = 0xFFFFFFFFU;
     return 0;
 }
 
+
+static int verify_worker_file(
+    const char* path,
+    char expected_pid
+) {
+    unsigned char buffer[2];
+    struct vfs_file* file;
+    int result;
+    int ok = 1;
+
+    file =
+        vfs_open(
+            path,
+            VFS_O_READ
+        );
+
+    if (!file) {
+        return 0;
+    }
+
+    result =
+        vfs_read(
+            file,
+            buffer,
+            sizeof(buffer)
+        );
+
+    if (result != 2 ||
+        buffer[0] != (unsigned char)expected_pid ||
+        buffer[1] != 10) {
+        ok = 0;
+    }
+
+    vfs_close(file);
+    return ok;
+}
+
 void syscall_run_test(void) {
-    if (user_code_physical == VM_ALLOC_FAIL ||
-        user_stack_physical == VM_ALLOC_FAIL) {
+    int pid_a;
+    int pid_b;
+
+    scheduler_init();
+
+    pid_a = process_create("worker-A");
+    pid_b = process_create("worker-B");
+
+    if (pid_a < 0) {
         print_string(
-            "usertest: user environment is not initialized.\n",
+            "usertest: failed to create first process.\n",
             0x0C
         );
+        scheduler_cleanup();
         return;
     }
 
+    if (pid_b < 0) {
+        print_string(
+            "usertest: second process could not be created; running one process.\n",
+            0x0C
+        );
+    }
+
+    if (!scheduler_prepare_first()) {
+        print_string(
+            "usertest: scheduler initialization failed.\n",
+            0x0C
+        );
+        scheduler_cleanup();
+        return;
+    }
+
+    print_string("Process table:\n", 0x0A);
+    scheduler_print_processes();
+
+    print_string("Starting preemptive scheduler...\n", 0x0E);
+    print_string("Loading embedded ELF image...\n", 0x0E);
     print_string("Entering Ring 3...\n", 0x0E);
 
-    enter_user_mode(USER_CODE_BASE, USER_STACK_TOP);
+    enter_user_mode(
+        scheduler_current_entry(),
+        scheduler_current_stack_top()
+    );
 
-    print_string("Returned to kernel from Ring 3.\n", 0x0E);
+    print_string("All user processes have returned to the kernel.\n", 0x0E);
+
+    scheduler_cleanup();
+
+    if (pid_b >= 0 &&
+        verify_worker_file(
+            "/worker1.txt",
+            '1'
+        ) &&
+        verify_worker_file(
+            "/worker2.txt",
+            '2'
+        )) {
+        print_string(
+            "usertest: user DiskFS syscalls PASS. Files survive reboot.\n",
+            0x0A
+        );
+    } else {
+        print_string(
+            "usertest: user DiskFS syscall verification FAILED.\n",
+            0x0C
+        );
+    }
 }

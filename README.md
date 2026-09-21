@@ -2,10 +2,34 @@
 
 Учебная 32-битная x86 ОС.
 
-## Текущий этап — Phase 10
+## Текущий этап — Phase 14
+
+На этом этапе NanoOS получает настоящее блочное хранилище и первую persistent filesystem.
+
+Phase 13 давала VFS поверх RAMFS, поэтому файлы существовали только до reboot. Phase 14 сохраняет ту же VFS-интерфейсную часть, но заменяет RAMFS-хранилище на простой дисковый backend DiskFS.
+
+Основная цепочка теперь:
+
+Shell / user syscalls
+        |
+        v
+       VFS
+        |
+        v
+     DiskFS
+        |
+        v
+     ATA PIO
+        |
+        v
+   IDE disk image
+
+После перезагрузки NanoOS дерево каталогов и содержимое файлов восстанавливаются с диска.
+
+## Возможности
 
 - GRUB Multiboot
-- собственная flat GDT
+- flat GDT
 - IDT на 256 записей
 - CPU exception handlers
 - PIC 8259A
@@ -16,100 +40,366 @@
 - kernel heap с malloc/free
 - 32-битный paging без PAE
 - kernel virtual-memory область 0xC0000000–0xC3FFFFFF
-- virtual page allocator
 - Page Fault с расшифровкой адреса и error code
 - null page protection
 - CR0.WP
-- user VM область 0x80000000–0x803FFFFF
-- user code и user stack с отдельными правами страниц
-- GDT-сегменты Ring 3
-- 32-битный TSS с отдельным kernel stack при входе из Ring 3
+- Ring 3
+- TSS с отдельным kernel stack при входе из Ring 3
 - DPL3 system call gate на interrupt 0x80
-- SYS_WRITE и SYS_EXIT
-- проверка user pointers перед SYS_WRITE
-- возврат из демонстрационной user-программы обратно в kernel shell
-- shell: help, clear, uptime, ticks, meminfo, physinfo, memtest, paging, vmtest, pfault, usertest
+- scheduler и preemptive round-robin на IRQ0
+- PID и PCB для процессов
+- отдельный page directory (CR3) для каждого процесса
+- отдельная user page table для каждого процесса
+- общий kernel address space
+- отдельный kernel stack для каждого процесса
+- ELF32 loader из встроенного user ELF image
+- PT_LOAD загрузка, BSS zero-fill и проверка границ
+- page permissions из ELF PF_* после загрузки
+- user heap через SYS_SBRK
+- VFS
+- persistent DiskFS
+- ATA PIO IDE block driver
+- дерево каталогов и файлов на диске
+- file handles и offsets
+- per-process file descriptor table
+- файловые syscalls
+- shell file manager
 
-## Архитектура Phase 10
+## Phase 14: DiskFS
 
-NanoOS теперь имеет реальную границу привилегий:
+DiskFS — специально маленькая файловая система для NanoOS.
 
-```
-Ring 3
-  |
-  | int 0x80
-  v
-TSS.esp0
-  |
-  v
-Ring 0
-  |
-  +-- syscall dispatcher
-  +-- kernel heap
-  +-- physical memory
-  +-- virtual memory
-```
+Она не пытается быть FAT/ext2/Unix FS. Её задача — дать ОС настоящий persistent block-storage слой, на котором можно продолжать строить более высокие уровни.
 
-Пользовательский тестовый код запускается в отдельной user VM-области:
+### Диск
 
-```
-0x80000000  user code
-0x80001000  user stack
-0x80002000  end of test stack
-```
+Makefile создаёт файл:
 
-Kernel address space остаётся недоступным из Ring 3, потому что соответствующие PDE/PTE не имеют PAGE_USER.
+nanoos.disk
 
-SYS_WRITE принимает:
-- EAX = 1
-- EBX = user buffer
-- ECX = length
+Размер:
 
-Ядро проверяет весь диапазон пользовательской памяти перед чтением.
+16 MiB
 
-SYS_EXIT завершает демонстрационный процесс и возвращает управление исходному kernel stack, после чего usertest продолжает выполнение в Ring 0.
+На первом запуске DiskFS видит пустой образ и автоматически форматирует его.
 
-## Команды Phase 10
+На следующих запусках тот же образ монтируется, поэтому файлы остаются.
 
-```text
-usertest
+Чтобы полностью начать с чистого диска:
+
+make disk-reset
+
+После этого следующий запуск снова создаст новый пустой образ.
+
+### Разметка диска
+
+Sector 0:
+superblock
+
+Sectors 1–16:
+inode table
+
+Sectors 17–24:
+data-sector bitmap
+
+Sector 25+:
+file data
+
+Размер сектора:
+512 bytes
+
+DiskFS использует LBA28 ATA PIO, чего более чем достаточно для текущего 16 MiB образа.
+
+## Inodes
+
+Всего:
+
+128 inodes
+
+Каждый inode хранит:
+
+- used
+- type
+- size
+- первый сектор данных
+- количество секторов
+- parent inode
+- имя файла/каталога
+
+Каталоги не содержат отдельного списка directory entries. Иерархия восстанавливается через parent inode.
+
+Это сознательно простой дизайн: VFS всё равно строит нормальное дерево объектов в памяти после загрузки.
+
+## Ограничения текущего DiskFS
+
+- максимум 128 inodes;
+- максимальный размер одного файла — 64 KiB;
+- один файл занимает непрерывный диапазон дисковых секторов;
+- максимум 16 MiB используемого дискового образа;
+- нет journaling;
+- нет fsck/recovery;
+- нет прав доступа файлов;
+- нет timestamp;
+- нет symbolic links;
+- нет hard links;
+- нет multi-user storage;
+- ATA driver сейчас рассчитан на primary IDE master;
+- DiskFS использует простое copy-on-write обновление файла.
+
+Последний пункт важен: при записи новый набор секторов сначала выделяется и заполняется, затем inode переключается на новую область. Это снижает риск оставить inode указывать на частично записанные новые данные при ошибке записи.
+
+Цена простоты — возможная фрагментация и дополнительная запись на диск.
+
+## VFS
+
+Публичный VFS API сохранился:
+
+vfs_init()
+vfs_lookup()
+vfs_mkdir()
+vfs_create_file()
+vfs_remove()
+
+vfs_open()
+vfs_read()
+vfs_write()
+vfs_seek()
+vfs_close()
+vfs_truncate()
+
+Shell по-прежнему может использовать относительные пути. Внутри VFS используются абсолютные пути:
+
+/
+/test
+/test/hello.txt
+
+Поддерживаются:
+
+.
+..
+
+VFS кэширует содержимое открытого файла в памяти. Если файл уже есть на диске, его содержимое подгружается при первом обращении.
+
+Запись через vfs_write() сразу сохраняется в DiskFS. Поэтому закрытие файла не является условием сохранения данных.
+
+## Shell
+
+Команды:
+
+help
+clear
+uptime
+ticks
+meminfo
+physinfo
+memtest
 paging
 vmtest
 pfault
-memtest
-```
+ps
+usertest
+diskinfo
 
-Ожидаемый результат usertest:
+pwd
+ls [path]
+cd <path>
+mkdir <path>
+touch <path>
+write <path> <text>
+cat <path>
+open <path>
+read <fd> [length]
+close <fd>
+rm <path>
+fstest
 
-```text
+### diskinfo
+
+Показывает:
+
+- общее количество секторов DiskFS;
+- свободные data sectors;
+- занятые inodes.
+
+Пример:
+
+> diskinfo
+DiskFS sectors: 32768
+Free data sectors: ...
+Used inodes: ...
+
+### Пример
+
+> mkdir test
+> cd test
+> touch hello.txt
+> write hello.txt "Hello NanoOS!"
+> ls
+[FILE] hello.txt  13 bytes
+> cat hello.txt
+Hello NanoOS!
+
+Теперь можно выйти из QEMU:
+
+Ctrl+C
+
+или закрыть окно QEMU, затем снова:
+
+make run
+
+и проверить:
+
+> cd /test
+> cat hello.txt
+
+Файл должен остаться.
+
+### Проверка FS
+
+> fstest
+
+Проверяет:
+
+mkdir
+  ↓
+create
+  ↓
+open
+  ↓
+write
+  ↓
+seek
+  ↓
+read
+  ↓
+close
+
+Теперь этот тест работает уже через DiskFS, а не через RAMFS.
+
+## Ring 3
+
+User-процессы используют:
+
+| ID | Назначение |
+|----|------------|
+| 0 | SYS_EXIT |
+| 1 | SYS_WRITE |
+| 2 | SYS_GETPID |
+| 3 | SYS_YIELD |
+| 4 | SYS_SBRK |
+| 5 | SYS_OPEN |
+| 6 | SYS_FILE_READ |
+| 7 | SYS_FILE_WRITE |
+| 8 | SYS_CLOSE |
+
+Команда:
+
 > usertest
-Entering Ring 3...
-Hello from Ring 3! System call works.
-[syscall] user program exited.
-Returned to kernel from Ring 3.
->
-```
 
-## Что пока намеренно не реализовано
+создаёт два Ring 3 процесса.
 
-У NanoOS ещё нет процесса как самостоятельного объекта, scheduler или отдельных address spaces на каждый процесс.
+Они:
 
-Phase 10 только создаёт основу:
-- Ring 3
-- TSS
-- syscalls
-- user memory
-- безопасный переход user -> kernel -> user/kernel return
+1. выделяют user heap;
+2. получают PID;
+3. создают /worker1.txt и /worker2.txt;
+4. записывают туда PID;
+5. закрывают файлы;
+6. снова открывают их;
+7. читают данные через SYS_FILE_READ;
+8. проверяют содержимое;
+9. завершаются.
 
-Следующая крупная стадия может использовать этот фундамент для настоящих процессов и вытесняющей многозадачности.
+После завершения процессов файлы остаются на диске.
 
-## Сборка в Ubuntu
+Поэтому Phase 14 впервые связывает сразу несколько подсистем:
 
-```bash
+Ring 3
+  ↓
+syscalls
+  ↓
+VFS
+  ↓
+DiskFS
+  ↓
+ATA PIO
+  ↓
+диск
+
+## Сборка
+
+Полная сборка:
+
 make clean
 make
 make iso
 make run
-```
 
-Сгенерированные `.o`, `.bin` и `.iso` не хранятся в Git.
+Проверка Multiboot kernel image:
+
+make check
+
+Создание диска выполняется автоматически при make run.
+
+Если файл nanoos.disk уже существует, он не перезаписывается.
+
+## Что пока не реализовано
+
+У NanoOS всё ещё нет:
+
+- программ, загружаемых с диска;
+- fork/exec;
+- IPC;
+- blocked/sleeping states;
+- полноценного user malloc/free;
+- динамического линкера;
+- shared libraries;
+- настоящего terminal device;
+- device filesystem;
+- pipes;
+- нормальной файловой модели Unix;
+- графической подсистемы.
+
+## Дальнейшая архитектура
+
+Теперь путь к запуску программ с диска становится реальным:
+
+/bin/test.elf
+      ↓
+DiskFS
+      ↓
+VFS
+      ↓
+ELF loader
+      ↓
+new process
+      ↓
+Ring 3
+
+Это уже следующая логическая большая ступень.
+
+Phase 14 прежде всего добавляет физическое хранение данных.
+
+После неё можно отдельно заниматься:
+
+- загрузкой ELF непосредственно из VFS;
+- exec();
+- созданием процессов из файлов;
+- нормальным shell для запуска программ;
+- более серьёзной файловой системой;
+- устройствами как файлами;
+- blocked processes и sleep();
+- развитием текстового terminal UI.
+
+## Toolchain
+
+Проект рассчитан на Ubuntu/WSL с:
+
+- gcc multilib;
+- nasm;
+- binutils/ld;
+- grub-file;
+- grub-mkrescue;
+- qemu-system-i386.
+
+Сгенерированные .o, .elf, .bin, .iso и nanoos.disk не хранятся в Git.
