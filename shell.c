@@ -9,6 +9,8 @@ extern void print_char(char c, unsigned char color);
 extern void print_string(const char* str, unsigned char color);
 extern const unsigned char user_image_start;
 extern const unsigned char user_image_end;
+extern const unsigned char user_exec_image_start;
+extern const unsigned char user_exec_image_end;
 
 #define SHELL_FD_MAX 8
 
@@ -1193,6 +1195,108 @@ static int command_layout(
     return 1;
 }
 
+static int command_install_exec_test(void) {
+    const unsigned char* image =
+        &user_exec_image_start;
+    unsigned int image_size =
+        (unsigned int)(
+            &user_exec_image_end -
+            &user_exec_image_start
+        );
+    struct vfs_file* file;
+    unsigned int total = 0;
+
+    if (!vfs_lookup("/bin")) {
+        if (!vfs_mkdir("/bin")) {
+            print_error(
+                "install-exec-test: ",
+                "cannot create /bin."
+            );
+            return 0;
+        }
+    }
+
+    if (vfs_lookup("/bin/exec-test.elf")) {
+        print_error(
+            "install-exec-test: ",
+            "/bin/exec-test.elf already exists."
+        );
+        return 0;
+    }
+
+    file =
+        vfs_open(
+            "/bin/exec-test.elf",
+            VFS_O_WRITE |
+            VFS_O_CREATE |
+            VFS_O_TRUNC
+        );
+
+    if (!file) {
+        print_error(
+            "install-exec-test: ",
+            "cannot create executable."
+        );
+        return 0;
+    }
+
+    while (total < image_size) {
+        unsigned int remaining =
+            image_size - total;
+        unsigned int chunk =
+            remaining > 4096U
+                ? 4096U
+                : remaining;
+        int written =
+            vfs_write(
+                file,
+                image + total,
+                chunk
+            );
+
+        if (written <= 0 ||
+            (unsigned int)written > chunk) {
+            vfs_close(file);
+            (void)vfs_remove(
+                "/bin/exec-test.elf"
+            );
+            print_error(
+                "install-exec-test: ",
+                "failed while writing executable."
+            );
+            return 0;
+        }
+
+        total += (unsigned int)written;
+
+        if ((unsigned int)written < chunk &&
+            total < image_size) {
+            vfs_close(file);
+            (void)vfs_remove(
+                "/bin/exec-test.elf"
+            );
+            print_error(
+                "install-exec-test: ",
+                "executable write was truncated."
+            );
+            return 0;
+        }
+    }
+
+    vfs_close(file);
+
+    print_string(
+        "Installed /bin/exec-test.elf (",
+        0x0A
+    );
+    print_uint(image_size, 0x0F);
+    print_string(
+        " bytes).\n",
+        0x0A
+    );
+    return 1;
+}
+
 int shell_init(void) {
     for (int fd = 0;
          fd < SHELL_FD_MAX;
@@ -1450,6 +1554,16 @@ int shell_handle_command(
             &args
         )) {
         command_run(args);
+        return 1;
+    }
+
+    if (command_args(
+            command,
+            "install-exec-test",
+            &args
+        ) &&
+        *skip_spaces(args) == '\0') {
+        command_install_exec_test();
         return 1;
     }
 
