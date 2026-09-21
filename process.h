@@ -43,9 +43,15 @@ int process_run_image(
     const unsigned char* image,
     unsigned int image_size
 );
+int process_exec_image(
+    const char* name,
+    const unsigned char* image,
+    unsigned int image_size
+);
 int scheduler_prepare_first(void);
 unsigned int scheduler_on_timer(unsigned int* interrupt_stack);
 unsigned int scheduler_on_syscall(unsigned int* interrupt_stack);
+unsigned int scheduler_on_exec(void);
 
 int scheduler_current_pid(void);
 unsigned int scheduler_current_entry(void);
