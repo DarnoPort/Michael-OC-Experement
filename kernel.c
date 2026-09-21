@@ -4,6 +4,7 @@
 #include "process.h"
 #include "vfs.h"
 #include "shell.h"
+#include "terminal.h"
 
 // NanoOS Phase 14: ATA PIO + persistent DiskFS.
 
@@ -22,115 +23,8 @@ static inline void outb(unsigned short port, unsigned char data) {
 }
 
 // -----------------------------------------------------------------------------
-// 2. Видеотерминал
+// 2. Terminal output helpers are implemented in terminal.c.
 // -----------------------------------------------------------------------------
-
-volatile unsigned short* vga_buffer = (unsigned short*)0xB8000;
-int term_row = 0;
-int term_col = 0;
-
-static void scroll_screen(void) {
-    for (int row = 1; row < 25; row++) {
-        for (int col = 0; col < 80; col++) {
-            vga_buffer[(row - 1) * 80 + col] = vga_buffer[row * 80 + col];
-        }
-    }
-
-    for (int col = 0; col < 80; col++) {
-        vga_buffer[24 * 80 + col] = ' ' | (0x07 << 8);
-    }
-
-    term_row = 24;
-    term_col = 0;
-}
-
-void print_char(char c, unsigned char color) {
-    if (c == '\n') {
-        term_col = 0;
-        term_row++;
-
-        if (term_row >= 25) {
-            scroll_screen();
-        }
-
-        return;
-    }
-
-    if (c == '\b') {
-        if (term_col > 0) {
-            term_col--;
-        } else if (term_row > 0) {
-            term_row--;
-            term_col = 79;
-        } else {
-            return;
-        }
-
-        vga_buffer[term_row * 80 + term_col] = (unsigned short)' ' | (0x07 << 8);
-        return;
-    }
-
-    vga_buffer[term_row * 80 + term_col] = (unsigned short)c | (color << 8);
-    term_col++;
-
-    if (term_col >= 80) {
-        term_col = 0;
-        term_row++;
-
-        if (term_row >= 25) {
-            scroll_screen();
-        }
-    }
-}
-
-void print_string(const char* str, unsigned char color) {
-    for (int i = 0; str[i] != '\0'; i++) {
-        print_char(str[i], color);
-    }
-}
-
-static void print_hex_digit(unsigned int value, unsigned char color) {
-    const char* hex = "0123456789ABCDEF";
-    value &= 0xF;
-    print_char(hex[value], color);
-}
-
-static void print_hex32(unsigned int value, unsigned char color) {
-    print_string("0x", color);
-
-    for (int shift = 28; shift >= 0; shift -= 4) {
-        print_hex_digit(value >> shift, color);
-    }
-}
-
-static void print_hex64(unsigned int high, unsigned int low, unsigned char color) {
-    print_hex32(high, color);
-    print_char('_', color);
-
-    for (int shift = 28; shift >= 0; shift -= 4) {
-        print_hex_digit(low >> shift, color);
-    }
-}
-
-static void print_uint(unsigned int value, unsigned char color) {
-    char digits[10];
-    int n = 0;
-
-    if (value == 0) {
-        print_char('0', color);
-        return;
-    }
-
-    while (value > 0 && n < 10) {
-        digits[n++] = (char)('0' + value % 10);
-        value /= 10;
-    }
-
-    while (n > 0) {
-        print_char(digits[--n], color);
-    }
-}
-
 // -----------------------------------------------------------------------------
 // 3. Структуры IDT
 // -----------------------------------------------------------------------------
@@ -259,43 +153,9 @@ void init_pic(void) {
 // 5. PS/2 keyboard
 // -----------------------------------------------------------------------------
 
-const char scancode_ascii[] = {
-    0, 0, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', '\b',
-    '\t', 'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']', '\n',
-    0, 'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', '`',
-    0, '\\', 'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/', 0, '*', 0, ' '
-};
-
-char cmd_buffer[256];
-volatile int cmd_idx = 0;
-volatile int cmd_ready = 0;
-
 void keyboard_handler_c(void) {
     unsigned char scancode = inb(0x60);
-
-    if (!(scancode & 0x80)) {
-        char c = 0;
-
-        if (scancode < sizeof(scancode_ascii)) {
-            c = scancode_ascii[scancode];
-        }
-
-        if (c == '\n') {
-            cmd_buffer[cmd_idx] = '\0';
-            cmd_ready = 1;
-            print_char('\n', 0x07);
-        } else if (c == '\b') {
-            if (cmd_idx > 0) {
-                cmd_idx--;
-                print_char('\b', 0x07);
-            }
-        } else if (c) {
-            if (cmd_idx < 255) {
-                cmd_buffer[cmd_idx++] = c;
-                print_char(c, 0x0F);
-            }
-        }
-    }
+    terminal_keyboard_scancode(scancode);
 
     // EOI is sent by keyboard_handler_asm exactly once.
 }
@@ -461,12 +321,7 @@ int strcmp(const char* s1, const char* s2) {
 }
 
 void clear_screen(void) {
-    for (int i = 0; i < 80 * 25; i++) {
-        vga_buffer[i] = ' ' | (0x07 << 8);
-    }
-
-    term_row = 0;
-    term_col = 0;
+    terminal_clear();
 }
 
 static void print_uptime(void) {
@@ -493,7 +348,7 @@ static void print_uptime(void) {
 void kernel_main(unsigned int magic, unsigned int info_addr) {
     __asm__ __volatile__("cli");
 
-    clear_screen();
+    terminal_init();
 
     idtp.limit = (sizeof(struct idt_entry) * 256) - 1;
     idtp.base = (unsigned int)&idt;
@@ -510,7 +365,7 @@ void kernel_main(unsigned int magic, unsigned int info_addr) {
     init_pic();
     init_pit(100);
 
-    print_string("=== NanoOS Phase 14: ATA PIO + Persistent DiskFS ===\n", 0x0A);
+    print_string("=== Michael OS Phase 15: Text Terminal ===\n", 0x0A);
 
     if (!memory_init(magic, info_addr)) {
         print_string("WARNING: physical memory manager initialization failed.\n", 0x0C);
@@ -547,15 +402,18 @@ void kernel_main(unsigned int magic, unsigned int info_addr) {
     }
 
     print_string("Type 'help' for commands.\n", 0x0E);
-    print_string("> ", 0x0B);
+    terminal_prompt();
 
     __asm__ __volatile__("sti");
 
     while (1) {
-        if (cmd_ready) {
+        if (terminal_command_ready()) {
             __asm__ __volatile__("cli");
 
-            if (strcmp(cmd_buffer, "help") == 0) {
+            const char* command =
+                terminal_get_command();
+
+            if (strcmp(command, "help") == 0) {
                 print_string(
                     "Commands: help, clear, uptime, ticks, meminfo, physinfo, memtest, paging, vmtest, pfault, ps, usertest, diskinfo, pwd, ls, cd, mkdir, touch, write, cat, open, read, close, rm, fstest\n",
                     0x0E
@@ -589,15 +447,13 @@ void kernel_main(unsigned int magic, unsigned int info_addr) {
                 // Filesystem/shell command was handled by shell.c.
             } else if (strcmp(cmd_buffer, "sleep") == 0) {
                 print_string("sleep is not implemented yet.\n", 0x09);
-            } else if (cmd_idx > 0) {
+            } else if (terminal_command_length() > 0U) {
                 print_string("Unknown command: ", 0x0C);
-                print_string(cmd_buffer, 0x0C);
+                print_string(command, 0x0C);
                 print_char('\n', 0x07);
             }
 
-            cmd_idx = 0;
-            cmd_ready = 0;
-            print_string("> ", 0x0B);
+            terminal_command_consumed();
 
             __asm__ __volatile__("sti");
         }
