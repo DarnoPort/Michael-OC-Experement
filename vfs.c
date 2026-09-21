@@ -848,6 +848,12 @@ static int grow_file(
     }
 
     for (unsigned int i = 0;
+         i < new_capacity;
+         i++) {
+        new_data[i] = 0;
+    }
+
+    for (unsigned int i = 0;
          i < node->size;
          i++) {
         new_data[i] =
@@ -1175,6 +1181,22 @@ int vfs_write(
         )) {
         file->node->size = old_size;
         file->offset = old_offset;
+
+        if (old_size == 0) {
+            if (file->node->data) {
+                free(file->node->data);
+            }
+
+            file->node->data = 0;
+            file->node->capacity = 0;
+        } else {
+            (void)diskfs_read_file(
+                file->node->inode,
+                file->node->data,
+                old_size
+            );
+        }
+
         irq_restore_vfs(flags);
         return -1;
     }
