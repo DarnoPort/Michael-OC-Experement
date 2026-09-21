@@ -661,11 +661,17 @@ static unsigned char russian_character(
                 return 0xF0U;
             }
 
-            return
-                value >= 0xA0U &&
-                value <= 0xEFU
-                    ? (unsigned char)(value - 0x20U)
-                    : value;
+            if (value >= 0xA0U &&
+                value <= 0xAFU) {
+                return (unsigned char)(value - 0x20U);
+            }
+
+            if (value >= 0xE0U &&
+                value <= 0xEFU) {
+                return (unsigned char)(value - 0x50U);
+            }
+
+            return value;
         }
     }
 
@@ -702,6 +708,25 @@ static void cancel_current_command(void) {
     terminal_prompt();
 }
 
+static void try_switch_layout(void) {
+    /*
+     * Switch only when both modifiers are physically held.
+     * The latch prevents auto-repeat / modifier ordering
+     * from toggling the layout several times in one chord.
+     */
+    if (alt_down &&
+        shift_down &&
+        !layout_switch_latch) {
+        language_layout =
+            !language_layout;
+        layout_switch_latch = 1;
+    }
+
+    if (!alt_down && !shift_down) {
+        layout_switch_latch = 0;
+    }
+}
+
 void terminal_keyboard_scancode(
     unsigned char scancode
 ) {
@@ -719,8 +744,19 @@ void terminal_keyboard_scancode(
 
         extended_scancode = 0;
 
+        /*
+         * Right Ctrl / Right Alt arrive with an E0 prefix.
+         * Handle their make and break codes here instead of
+         * silently dropping the release event.
+         */
         if (code == 0x1DU) {
             ctrl_down = !released;
+            return;
+        }
+
+        if (code == 0x38U) {
+            alt_down = !released;
+            try_switch_layout();
             return;
         }
 
@@ -806,51 +842,31 @@ void terminal_keyboard_scancode(
         return;
     }
 
-    if (scancode == 0x2AU ||
-        scancode == 0x36U) {
-        shift_down = !released;
+    /*
+     * Modifier keys: use the base scan code so make and
+     * break events are handled symmetrically.
+     */
+    {
+        unsigned char code =
+            (unsigned char)(scancode & 0x7FU);
 
-        if (!released &&
-            alt_down &&
-            !layout_switch_latch) {
-            language_layout =
-                !language_layout;
-            layout_switch_latch = 1;
+        if (code == 0x2AU ||
+            code == 0x36U) {
+            shift_down = !released;
+            try_switch_layout();
+            return;
         }
 
-        if (released &&
-            !alt_down) {
-            layout_switch_latch = 0;
+        if (code == 0x1DU) {
+            ctrl_down = !released;
+            return;
         }
 
-        return;
-    }
-
-    if (scancode == 0x1DU) {
-        ctrl_down = !released;
-        if (released) {
-            layout_switch_latch = 0;
+        if (code == 0x38U) {
+            alt_down = !released;
+            try_switch_layout();
+            return;
         }
-        return;
-    }
-
-    if (scancode == 0x38U) {
-        alt_down = !released;
-
-        if (!released &&
-            shift_down &&
-            !layout_switch_latch) {
-            language_layout =
-                !language_layout;
-            layout_switch_latch = 1;
-        }
-
-        if (released &&
-            !shift_down) {
-            layout_switch_latch = 0;
-        }
-
-        return;
     }
 
     if (released) {
