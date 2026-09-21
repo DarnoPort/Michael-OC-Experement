@@ -66,7 +66,7 @@ $(BUILD)/diskfs.o: diskfs.c diskfs.h ata.h | $(BUILD)
 $(BUILD)/vfs.o: vfs.c vfs.h memory.h diskfs.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/shell.o: shell.c shell.h vfs.h diskfs.h | $(BUILD)
+$(BUILD)/shell.o: shell.c shell.h vfs.h diskfs.h terminal.h process.h memory.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/user_args_raw.o: user_args.asm | $(BUILD)
