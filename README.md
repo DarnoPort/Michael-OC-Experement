@@ -2,9 +2,9 @@
 
 Учебная 32-битная x86 ОС.
 
-## Текущий этап — Phase 17
+## Текущий этап — Phase 18
 
-На этом этапе Michael OS получает загрузку программ через `exec()` и полноценный двуязычный ввод поверх уже работающих VFS, DiskFS, Ring 3 и текстового терминала.
+На этом этапе Michael OS получает стандартный интерфейс аргументов процесса: `argc`/`argv` передаются ELF-программе при запуске через `run`, включая аргументы из командной строки.
 
 Phase 13 давала VFS поверх RAMFS, поэтому файлы существовали только до reboot. Phase 14 сохраняет ту же VFS-интерфейсную часть, но заменяет RAMFS-хранилище на простой дисковый backend DiskFS.
 
@@ -64,8 +64,9 @@ Shell / user syscalls
 - per-process file descriptor table
 - файловые syscalls
 - shell file manager
-- запуск ELF32 программ с DiskFS через команду `run`
+- запуск ELF32 программ с DiskFS через команду `run <path> [args...]`
 - `SYS_EXEC` для замены текущего user process новым ELF image
+- стартовый `argc`/`argv` для ELF-программ
 - повторное использование PID при `exec()`
 - клавиатурные раскладки EN/RU
 - Shift и CapsLock
@@ -209,6 +210,56 @@ Ring 3
 Это ещё не полноценный Unix `exec()`: shell пока остаётся частью kernel, а аргументы командной строки и окружение процесса ещё не передаются.
 
 Ограничение текущего этапа: DiskFS хранит максимум 64 KiB на файл, поэтому текущие ELF-программы должны укладываться в это ограничение.
+
+## Phase 18: Process Arguments (`argc` / `argv`)
+
+Phase 18 превращает запуск ELF из просто «запустить файл» в нормальный запуск процесса с параметрами.
+
+Добавлено:
+
+- `PROCESS_ARG_MAX` — максимум 8 аргументов вместе с `argv[0]`;
+- `PROCESS_ARG_MAX_LEN` — максимум 127 символов на один аргумент;
+- отдельный `initial_user_esp`, чтобы не путать вершину выделенной страницы стека и начальный `ESP`;
+- `argc` и `argv[]` формируются ядром непосредственно на user stack;
+- `argv[argc] == NULL`;
+- третий стартовый параметр `envp` пока передаётся как `NULL`;
+- `run <path> [args...]` передаёт аргументы процессу;
+- двойные кавычки позволяют сделать один аргумент из нескольких слов;
+- встроенный `/bin/args-test.elf` показывает фактические `argc` и `argv`.
+
+Структура стартового user stack:
+
+```text
+ESP -> argc
+       argv
+       envp = NULL
+
+argv -> argv[0]
+        argv[1]
+        ...
+        argv[argc] = NULL
+
+        строка argv[0]
+        строка argv[1]
+        ...
+```
+
+Пример:
+
+```text
+> install-args-test
+> run /bin/args-test.elf alpha beta "hello world"
+
+[run] loading /bin/args-test.elf into Ring 3... with 3 arg(s)
+=== argv test ===
+argc=4
+argv[0]=/bin/args-test.elf
+argv[1]=alpha
+argv[2]=beta
+argv[3]=hello world
+```
+
+Это ещё не полноценный Unix process environment: `SYS_EXEC` пока принимает только путь и не умеет передавать новый `argv`, а `envp` не реализован.
 
 ## Phase 17: Exec and International Keyboard Input
 
@@ -578,7 +629,7 @@ Phase 16 превращает DiskFS из хранилища данных в и�
 Следующие ступени можно посвятить:
 
 - `fork()`;
-- `argv` / `argc` и окружению процесса;
+- расширению `exec()` для передачи `argv` / `envp`;
 - stdin / stdout / stderr как настоящим файловым дескрипторам;
 - blocked processes и `sleep()`;
 - user-space runtime / libc-подобной библиотеке;
