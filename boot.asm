@@ -27,10 +27,10 @@ extern kernel_main
 _start:
     cli
 
-    ; Save the Multiboot values before setting up our own environment.
+    ; Save the Multiboot values in registers while we replace the stack.
     ; EAX = Multiboot magic, EBX = pointer to multiboot_info.
-    push ebx
-    push eax
+    mov esi, eax
+    mov edi, ebx
 
     lgdt [gdt_descriptor]
     jmp 0x08:.gdt_loaded
@@ -47,6 +47,8 @@ _start:
     xor ebp, ebp
 
     ; cdecl: kernel_main(multiboot_magic, multiboot_info_addr)
+    push edi
+    push esi
     call kernel_main
     add esp, 8
 
