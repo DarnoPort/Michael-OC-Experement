@@ -1,5 +1,6 @@
 #include "shell.h"
 #include "vfs.h"
+#include "diskfs.h"
 
 extern void print_char(char c, unsigned char color);
 extern void print_string(const char* str, unsigned char color);
@@ -49,6 +50,32 @@ static void shell_copy(
     }
 
     destination[i] = '\0';
+}
+
+
+static void shell_print_uint(
+    unsigned int value
+) {
+    char digits[10];
+    int count = 0;
+
+    if (value == 0) {
+        print_char('0', 0x0F);
+        return;
+    }
+
+    while (value > 0 && count < 10) {
+        digits[count++] =
+            (char)('0' + value % 10U);
+        value /= 10U;
+    }
+
+    while (count > 0) {
+        print_char(
+            digits[--count],
+            0x0F
+        );
+    }
 }
 
 static const char* skip_spaces(
@@ -676,9 +703,50 @@ static void command_close(const char* args) {
     shell_files[fd] = 0;
 }
 
+
+static int command_diskinfo(void) {
+    unsigned int total;
+    unsigned int free_sectors;
+    unsigned int used_inodes;
+
+    if (!diskfs_get_stats(
+            &total,
+            &free_sectors,
+            &used_inodes
+        )) {
+        print_error(
+            "diskinfo: ",
+            "filesystem statistics unavailable."
+        );
+        return 0;
+    }
+
+    print_string(
+        "DiskFS sectors: ",
+        0x0E
+    );
+    shell_print_uint(total);
+    print_string(
+        "\nFree data sectors: ",
+        0x0E
+    );
+    shell_print_uint(free_sectors);
+    print_string(
+        "\nUsed inodes: ",
+        0x0E
+    );
+    shell_print_uint(used_inodes);
+    print_string(
+        "\n",
+        0x07
+    );
+
+    return 1;
+}
+
 static int command_fstest(void) {
     static const char message[] =
-        "Hello NanoOS Phase 13!";
+        "Hello NanoOS Phase 14!";
     unsigned char buffer[
         sizeof(message)
     ];
@@ -765,7 +833,7 @@ static int command_fstest(void) {
 
     if (ok) {
         print_string(
-            "fstest: PASS (RAMFS mkdir/create/open/write/read/close)\n",
+            "fstest: PASS (DiskFS mkdir/create/open/write/read/close)\n",
             0x0A
         );
     } else {
@@ -974,6 +1042,16 @@ int shell_handle_command(
             );
         }
 
+        return 1;
+    }
+
+    if (command_args(
+            command,
+            "diskinfo",
+            &args
+        ) &&
+        *skip_spaces(args) == '\0') {
+        command_diskinfo();
         return 1;
     }
 
