@@ -108,6 +108,21 @@ int syscall_dispatch(void* registers_ptr) {
         return 0;
     }
 
+    if (registers->eax == SYS_SBRK) {
+        unsigned int old_break;
+
+        if (!process_sbrk(
+                registers->ebx,
+                &old_break
+            )) {
+            registers->eax = 0xFFFFFFFFU;
+        } else {
+            registers->eax = old_break;
+        }
+
+        return 0;
+    }
+
     if (registers->eax == SYS_YIELD) {
         registers->eax = 0;
         return 2;
@@ -160,9 +175,13 @@ void syscall_run_test(void) {
     scheduler_print_processes();
 
     print_string("Starting preemptive scheduler...\n", 0x0E);
+    print_string("Loading embedded ELF image...\n", 0x0E);
     print_string("Entering Ring 3...\n", 0x0E);
 
-    enter_user_mode(USER_CODE_BASE, USER_STACK_TOP);
+    enter_user_mode(
+        scheduler_current_entry(),
+        scheduler_current_stack_top()
+    );
 
     print_string("All user processes have returned to the kernel.\n", 0x0E);
 
