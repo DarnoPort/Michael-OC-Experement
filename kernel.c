@@ -186,7 +186,7 @@ void exception_handler_c(unsigned int vector, unsigned int error_code) {
     print_string("Exception: ", 0x4F);
     print_uint(vector, 0x4F);
 
-    print_string("\nError code: 0x", 0x4F);
+    print_string("\nError code: ", 0x4F);
     print_hex32(error_code, 0x4F);
 
     if (vector == 14) {

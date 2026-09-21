@@ -8,6 +8,7 @@ extern char _text_start;
 extern char _text_end;
 extern char _rodata_start;
 extern char _rodata_end;
+extern char _kernel_end;
 
 #define PAGE_ENTRIES 1024U
 #define PAGE_DIRECTORY_FLAG 0x00000083U
@@ -172,6 +173,10 @@ static void enable_paging(void) {
 }
 
 int paging_init(void) {
+    if ((unsigned int)(unsigned long)&_kernel_end >= 0x00400000U) {
+        return 0;
+    }
+
     for (unsigned int i = 0; i < PAGE_ENTRIES; i++) {
         page_directory[i] = 0;
     }

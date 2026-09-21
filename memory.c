@@ -7,7 +7,6 @@ extern void print_string(const char* str, unsigned char color);
 extern char _kernel_start;
 extern char _kernel_end;
 
-#define PAGE_SIZE 4096U
 #define PHYS_PAGE_COUNT 1048576U
 #define BITMAP_SIZE (PHYS_PAGE_COUNT / 8U)
 #define MAX_PHYS_ADDRESS 0x100000000ULL
