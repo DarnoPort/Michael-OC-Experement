@@ -14,7 +14,7 @@ QEMU := qemu-system-i386
 
 CFLAGS := -m32 -std=gnu99 -ffreestanding -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-builtin -Wall -Wextra
 LDFLAGS := -m elf_i386 -T linker.ld
-OBJS := $(BUILD)/boot.o $(BUILD)/interrupts.o $(BUILD)/kernel.o $(BUILD)/terminal.o $(BUILD)/memory.o $(BUILD)/paging.o $(BUILD)/process.o $(BUILD)/elf_loader.o $(BUILD)/syscalls.o $(BUILD)/ata.o $(BUILD)/diskfs.o $(BUILD)/vfs.o $(BUILD)/shell.o $(BUILD)/user_image.o
+OBJS := $(BUILD)/boot.o $(BUILD)/interrupts.o $(BUILD)/kernel.o $(BUILD)/terminal.o $(BUILD)/terminal_font.o $(BUILD)/memory.o $(BUILD)/paging.o $(BUILD)/process.o $(BUILD)/elf_loader.o $(BUILD)/syscalls.o $(BUILD)/ata.o $(BUILD)/diskfs.o $(BUILD)/vfs.o $(BUILD)/shell.o $(BUILD)/user_image.o $(BUILD)/user_exec_image.o
 
 .PHONY: all iso disk disk-reset run check clean
 
@@ -36,7 +36,10 @@ $(BUILD)/interrupts.o: interrupts.asm | $(BUILD)
 $(BUILD)/kernel.o: kernel.c memory.h paging.h process.h elf.h vfs.h shell.h terminal.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/terminal.o: terminal.c terminal.h | $(BUILD)
+$(BUILD)/terminal.o: terminal.c terminal.h terminal_font.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/terminal_font.o: terminal_font.c terminal_font.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/memory.o: memory.c memory.h paging.h | $(BUILD)
@@ -73,6 +76,15 @@ $(BUILD)/user_program.elf: $(BUILD)/user_program_raw.o user.ld | $(BUILD)
 	$(LD) -m elf_i386 -T user.ld -o $@ $(BUILD)/user_program_raw.o
 
 $(BUILD)/user_image.o: user_image.asm $(BUILD)/user_program.elf | $(BUILD)
+	$(AS) -f elf32 $< -o $@
+
+$(BUILD)/user_exec_raw.o: user_exec.asm | $(BUILD)
+	$(AS) -f elf32 $< -o $@
+
+$(BUILD)/user_exec.elf: $(BUILD)/user_exec_raw.o user.ld | $(BUILD)
+	$(LD) -m elf_i386 -T user.ld -o $@ $(BUILD)/user_exec_raw.o
+
+$(BUILD)/user_exec_image.o: user_exec_image.asm $(BUILD)/user_exec.elf | $(BUILD)
 	$(AS) -f elf32 $< -o $@
 
 iso: $(TARGET)
