@@ -1,4 +1,5 @@
 #include "terminal.h"
+#include "terminal_font.h"
 
 static volatile unsigned short* vga_buffer =
     (unsigned short*)0xB8000;
@@ -20,6 +21,99 @@ static char history_scratch[TERMINAL_INPUT_MAX];
 static int history_scratch_valid = 0;
 
 static int extended_scancode = 0;
+static int shift_down = 0;
+static int ctrl_down = 0;
+static int alt_down = 0;
+static int caps_lock = 0;
+static int language_layout = 0;
+static int layout_switch_latch = 0;
+
+static unsigned char vga_font_buffer[256U * 32U];
+
+static inline unsigned char inb(
+    unsigned short port
+) {
+    unsigned char result;
+
+    __asm__ __volatile__(
+        "inb %1, %0"
+        : "=a"(result)
+        : "Nd"(port)
+    );
+
+    return result;
+}
+
+static void terminal_install_cyrillic_font(void) {
+    volatile unsigned char* font_memory =
+        (volatile unsigned char*)0xA0000;
+
+    /*
+     * VGA text mode stores 256 glyphs with
+     * 32 bytes reserved for each glyph.
+     * We preserve the current font and replace
+     * only the CP866 Cyrillic glyph slots.
+     */
+    outb(0x3CE, 0x05);
+    outb(0x3CF, 0x00);
+
+    outb(0x3CE, 0x06);
+    outb(0x3CF, 0x04);
+
+    outb(0x3C4, 0x02);
+    outb(0x3C5, 0x04);
+
+    outb(0x3C4, 0x04);
+    outb(0x3C5, 0x06);
+
+    for (unsigned int i = 0;
+         i < sizeof(vga_font_buffer);
+         i++) {
+        vga_font_buffer[i] =
+            font_memory[i];
+    }
+
+    for (unsigned int i = 0;
+         i < terminal_cyrillic_glyph_count;
+         i++) {
+        unsigned int offset =
+            (unsigned int)terminal_cyrillic_glyphs[i].code * 32U;
+
+        for (unsigned int row = 0;
+             row < 16U;
+             row++) {
+            vga_font_buffer[offset + row] =
+                terminal_cyrillic_glyphs[i].bitmap[row];
+        }
+
+        for (unsigned int row = 16U;
+             row < 32U;
+             row++) {
+            vga_font_buffer[offset + row] = 0;
+        }
+    }
+
+    for (unsigned int i = 0;
+         i < sizeof(vga_font_buffer);
+         i++) {
+        font_memory[i] =
+            vga_font_buffer[i];
+    }
+
+    /* Restore normal VGA text-mode addressing. */
+    outb(0x3C4, 0x02);
+    outb(0x3C5, 0x03);
+
+    outb(0x3C4, 0x04);
+    outb(0x3C5, 0x02);
+
+    outb(0x3CE, 0x05);
+    outb(0x3CF, 0x10);
+
+    outb(0x3CE, 0x06);
+    outb(0x3CF, 0x0E);
+}
+
 
 static inline void outb(
     unsigned short port,
@@ -428,10 +522,19 @@ void terminal_prompt(void) {
     terminal_update_cursor();
 }
 
-static char scancode_to_ascii(
+static int is_letter_scancode(
     unsigned char scancode
 ) {
-    static const unsigned char codes[58] = {
+    return
+        (scancode >= 0x10U && scancode <= 0x19U) ||
+        (scancode >= 0x1EU && scancode <= 0x26U) ||
+        (scancode >= 0x2CU && scancode <= 0x32U);
+}
+
+static unsigned char english_character(
+    unsigned char scancode
+) {
+    static const unsigned char lower[58] = {
         0, 0,
         '1', '2', '3', '4',
         '5', '6', '7', '8',
@@ -450,34 +553,163 @@ static char scancode_to_ascii(
         0, '*', 0, ' '
     };
 
-    if (scancode >= sizeof(codes)) {
+    static const unsigned char shifted[58] = {
+        0, 0,
+        '!', '@', '#', '$',
+        '%', '^', '&', '*',
+        '(', ')', '_', '+',
+        8, 9,
+        'Q', 'W', 'E', 'R',
+        'T', 'Y', 'U', 'I',
+        'O', 'P', '{', '}',
+        10, 0,
+        'A', 'S', 'D', 'F',
+        'G', 'H', 'J', 'K',
+        'L', ':', 34, '~',
+        0, '|', 'Z', 'X',
+        'C', 'V', 'B', 'N',
+        'M', '<', '>', '?',
+        0, '*', 0, ' '
+    };
+
+    if (scancode >= sizeof(lower)) {
         return 0;
     }
 
-    return (char)codes[scancode];
+    if (is_letter_scancode(scancode)) {
+        int upper =
+            shift_down ^ caps_lock;
+
+        return upper
+            ? shifted[scancode]
+            : lower[scancode];
+    }
+
+    return shift_down
+        ? shifted[scancode]
+        : lower[scancode];
+}
+
+static unsigned char russian_lower_character(
+    unsigned char scancode
+) {
+    static const unsigned char lower[58] = {
+        0, 0,
+        '1', '2', '3', '4',
+        '5', '6', '7', '8',
+        '9', '0', '-', '=',
+        8, 9,
+        0xA9, 0xE6, 0xE3, 0xAA,
+        0xA5, 0xAD, 0xA3, 0xE8,
+        0xE9, 0xA7, 0xE5, 0xEA,
+        10, 0,
+        0xE4, 0xEB, 0xA2, 0xA0,
+        0xAF, 0xE0, 0xAE, 0xAB,
+        0xA4, 0xA6, 0xED, 0xF1,
+        0, 0x5C, 0xEF, 0xE7,
+        0xE1, 0xAC, 0xA8, 0xE2,
+        0xEC, 0xA1, 0xEE, ',',
+        0, '*', 0, ' '
+    };
+
+    if (scancode >= sizeof(lower)) {
+        return 0;
+    }
+
+    return lower[scancode];
+}
+
+static unsigned char russian_character(
+    unsigned char scancode
+) {
+    unsigned char value =
+        russian_lower_character(scancode);
+
+    if (!value) {
+        return 0;
+    }
+
+    if (is_letter_scancode(scancode)) {
+        int upper =
+            shift_down ^ caps_lock;
+
+        if (upper) {
+            if (value == 0xF1U) {
+                return 0xF0U;
+            }
+
+            return
+                value >= 0xA0U &&
+                value <= 0xEFU
+                    ? (unsigned char)(value - 0x20U)
+                    : value;
+        }
+    }
+
+    return value;
+}
+
+static char scancode_to_ascii(
+    unsigned char scancode
+) {
+    return (char)(
+        language_layout
+            ? russian_character(scancode)
+            : english_character(scancode)
+    );
+}
+
+static void clear_current_input(void) {
+    command_length = 0;
+    cursor_index = 0;
+    command_buffer[0] = 0;
+    reset_history_navigation();
+    redraw_input();
+}
+
+static void cancel_current_command(void) {
+    clear_current_input();
+
+    term_row = prompt_row;
+    term_col = prompt_col;
+
+    print_string("^C", 0x0C);
+    print_char(10, 0x07);
+
+    terminal_prompt();
 }
 
 void terminal_keyboard_scancode(
     unsigned char scancode
 ) {
+    int released =
+        (scancode & 0x80U) != 0;
+
     if (scancode == 0xE0U) {
         extended_scancode = 1;
         return;
     }
 
-    if (scancode & 0x80U) {
-        extended_scancode = 0;
-        return;
-    }
-
     if (extended_scancode) {
+        unsigned char code =
+            (unsigned char)(scancode & 0x7FU);
+
         extended_scancode = 0;
+
+        if (code == 0x1DU) {
+            ctrl_down = !released;
+            return;
+        }
+
+        if (released) {
+            return;
+        }
 
         if (command_ready) {
             return;
         }
 
-        if (scancode == 0x4BU) {
+        if (code == 0x4BU) {
             if (cursor_index > 0U) {
                 cursor_index--;
                 redraw_input();
@@ -485,7 +717,7 @@ void terminal_keyboard_scancode(
             return;
         }
 
-        if (scancode == 0x4DU) {
+        if (code == 0x4DU) {
             if (cursor_index < command_length) {
                 cursor_index++;
                 redraw_input();
@@ -493,24 +725,24 @@ void terminal_keyboard_scancode(
             return;
         }
 
-        if (scancode == 0x47U) {
+        if (code == 0x47U) {
             cursor_index = 0;
             redraw_input();
             return;
         }
 
-        if (scancode == 0x4FU) {
+        if (code == 0x4FU) {
             cursor_index = command_length;
             redraw_input();
             return;
         }
 
-        if (scancode == 0x53U) {
+        if (code == 0x53U) {
             delete_character();
             return;
         }
 
-        if (scancode == 0x48U) {
+        if (code == 0x48U) {
             if (history_count == 0U) {
                 return;
             }
@@ -529,7 +761,7 @@ void terminal_keyboard_scancode(
             return;
         }
 
-        if (scancode == 0x50U) {
+        if (code == 0x50U) {
             if (history_position < 0) {
                 return;
             }
@@ -551,8 +783,86 @@ void terminal_keyboard_scancode(
         return;
     }
 
+    if (scancode == 0x2AU ||
+        scancode == 0x36U) {
+        shift_down = !released;
+
+        if (!released &&
+            alt_down &&
+            !layout_switch_latch) {
+            language_layout =
+                !language_layout;
+            layout_switch_latch = 1;
+        }
+
+        if (released &&
+            !alt_down) {
+            layout_switch_latch = 0;
+        }
+
+        return;
+    }
+
+    if (scancode == 0x1DU) {
+        ctrl_down = !released;
+        if (released) {
+            layout_switch_latch = 0;
+        }
+        return;
+    }
+
+    if (scancode == 0x38U) {
+        alt_down = !released;
+
+        if (released &&
+            !shift_down) {
+            layout_switch_latch = 0;
+        }
+
+        return;
+    }
+
+    if (released) {
+        return;
+    }
+
+    if (scancode == 0x3AU) {
+        caps_lock = !caps_lock;
+        return;
+    }
+
     if (command_ready) {
         return;
+    }
+
+    if (ctrl_down) {
+        if (scancode == 0x2EU) {
+            cancel_current_command();
+            return;
+        }
+
+        if (scancode == 0x26U) {
+            terminal_clear();
+            terminal_prompt();
+            return;
+        }
+
+        if (scancode == 0x16U) {
+            clear_current_input();
+            return;
+        }
+
+        if (scancode == 0x1EU) {
+            cursor_index = 0;
+            redraw_input();
+            return;
+        }
+
+        if (scancode == 0x12U) {
+            cursor_index = command_length;
+            redraw_input();
+            return;
+        }
     }
 
     if (scancode == 0x1CU) {
@@ -568,19 +878,31 @@ void terminal_keyboard_scancode(
     }
 
     {
-        char c =
+        char character =
             scancode_to_ascii(scancode);
+        unsigned char value =
+            (unsigned char)character;
 
-        if ((unsigned char)c == 9U) {
+        if (value == 9U) {
             insert_character(' ');
             insert_character(' ');
             insert_character(' ');
             insert_character(' ');
         } else if (
-            (unsigned char)c >= 0x20U &&
-            (unsigned char)c <= 0x7EU
+            value >= 0x20U &&
+            value <= 0x7EU
         ) {
-            insert_character(c);
+            insert_character(character);
+        } else if (
+            language_layout &&
+            (
+                (value >= 0x80U && value <= 0xAFU) ||
+                (value >= 0xE0U && value <= 0xEFU) ||
+                value == 0xF0U ||
+                value == 0xF1U
+            )
+        ) {
+            insert_character(character);
         }
     }
 }
@@ -660,7 +982,30 @@ void terminal_init(void) {
     history_position = -1;
     history_scratch_valid = 0;
     extended_scancode = 0;
+    shift_down = 0;
+    ctrl_down = 0;
+    alt_down = 0;
+    caps_lock = 0;
+    language_layout = 0;
+    layout_switch_latch = 0;
     command_buffer[0] = 0;
 
+    terminal_install_cyrillic_font();
     terminal_clear();
+}
+
+void terminal_set_layout(int layout) {
+    if (layout == 0 || layout == 1) {
+        language_layout = layout;
+    }
+}
+
+int terminal_get_layout(void) {
+    return language_layout;
+}
+
+const char* terminal_layout_name(void) {
+    return language_layout
+        ? "RU"
+        : "EN";
 }
