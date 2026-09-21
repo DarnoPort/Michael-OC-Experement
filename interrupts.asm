@@ -134,6 +134,12 @@ timer_handler_asm:
     out 0x20, al
 
     mov esp, edx
+    mov ax, 0x23
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+
     popad
     iretd
 
@@ -186,6 +192,12 @@ syscall_handler_asm:
 
     mov edx, eax
     mov esp, edx
+    mov ax, 0x23
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+
     popad
     iretd
 
