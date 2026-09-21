@@ -477,6 +477,67 @@ int paging_unmap_user_page_in_directory(
     return 1;
 }
 
+int paging_set_user_page_flags_in_directory(
+    unsigned int directory,
+    unsigned int virtual_address,
+    unsigned int flags
+) {
+    unsigned int table_physical;
+    unsigned int* table;
+
+    if (!paging_ready ||
+        (directory & (PAGE_SIZE - 1U)) != 0 ||
+        (virtual_address & (PAGE_SIZE - 1U)) != 0 ||
+        virtual_address < USER_VM_BASE ||
+        virtual_address >= USER_VM_END) {
+        return 0;
+    }
+
+    if (!get_user_table_physical(
+            directory,
+            &table_physical
+        )) {
+        return 0;
+    }
+
+    table =
+        (unsigned int*)(unsigned long)KERNEL_VM_TEMP_ADDRESS;
+
+    if (!paging_map_page(
+            KERNEL_VM_TEMP_ADDRESS,
+            table_physical,
+            PAGE_WRITABLE
+        )) {
+        return 0;
+    }
+
+    {
+        unsigned int index =
+            (virtual_address - USER_VM_BASE) >> 12;
+        unsigned int entry = table[index];
+
+        if (!(entry & PAGE_PRESENT) ||
+            !(entry & PAGE_USER)) {
+            paging_unmap_page(KERNEL_VM_TEMP_ADDRESS);
+            return 0;
+        }
+
+        table[index] =
+            (entry & 0xFFFFF000U) |
+            (flags & 0x00000FFFU) |
+            PAGE_PRESENT |
+            PAGE_USER;
+    }
+
+    paging_unmap_page(KERNEL_VM_TEMP_ADDRESS);
+
+    if (directory == read_cr3()) {
+        invlpg(virtual_address);
+    }
+
+    return 1;
+}
+
 int paging_map_user_page(unsigned int virtual_address,
                          unsigned int physical_address,
                          unsigned int flags) {
@@ -966,7 +1027,7 @@ int paging_write_user_memory(
             directory,
             virtual_address,
             length,
-            1
+            0
         )) {
         return 0;
     }
