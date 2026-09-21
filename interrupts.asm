@@ -12,7 +12,6 @@ load_idt:
     lidt [edx]
     ret
 
-; Keyboard IRQ1.
 keyboard_handler_asm:
     pushad
     cld
@@ -22,52 +21,48 @@ keyboard_handler_asm:
     out 0x20, al
     iretd
 
-; Safe fallback for unexpected interrupts/exceptions.
+; Fallback for unexpected interrupts/exceptions.
 ; The CPU pushes an error code for exceptions 8, 10-14, 17 and 30.
-; We inspect the vector pushed by the individual stubs and remove the
-; error code when necessary before IRET.
 dummy_handler_asm:
     pushad
     mov eax, [esp + 32]
 
-    ; Acknowledge PIC IRQs 8..15.
+    ; Acknowledge IRQs. Slave IRQs must be acknowledged first.
     cmp eax, 40
-    jb .no_slave_eoi
+    jb .master_eoi_check
     mov al, 0x20
     out 0xA0, al
-.no_slave_eoi:
+
+.master_eoi_check:
     cmp eax, 32
-    jb .no_master_eoi
+    jb .check_error_code
     cmp eax, 48
-    jae .no_master_eoi
+    jae .check_error_code
     mov al, 0x20
     out 0x20, al
-.no_master_eoi:
 
-    ; Remove saved registers.
-    popad
-
-    ; CPU error-code exceptions.
+.check_error_code:
     cmp eax, 8
-    je .discard_error
+    je .with_error
     cmp eax, 10
-    jb .return
+    jb .without_error
     cmp eax, 14
-    jbe .discard_error
+    jbe .with_error
     cmp eax, 17
-    je .discard_error
+    je .with_error
     cmp eax, 30
-    je .discard_error
+    je .with_error
 
-.return:
+.without_error:
+    popad
     add esp, 4
     iretd
 
-.discard_error:
+.with_error:
+    popad
     add esp, 8
     iretd
 
-; Each stub pushes its vector number.
 %macro ISR_NOERR 1
 global isr%1
 isr%1:
