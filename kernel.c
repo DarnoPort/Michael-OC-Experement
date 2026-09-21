@@ -353,7 +353,7 @@ int strcmp(const char* s1, const char* s2) {
 static void print_help(void) {
     print_string("Michael OS command shell\n", 0x0A);
     print_string("----------------------\n", 0x08);
-    print_string("Files: dir, cd, mkdir, touch, copy-ready tools, write, type, open, read, close, del/rm\n", 0x0E);
+    print_string("Files: dir, cd, mkdir, touch, write, type, open, read, close, del/rm\n", 0x0E);
     print_string("System: ver, echo, history, clear, uptime, ticks, meminfo, physinfo, memtest, paging, vmtest, pfault, ps, usertest\n", 0x0E);
     print_string("Programs: install-demo, install-exec-test, install-args-test, run <path> [args...]\n", 0x0E);
     print_string("Shortcuts: cls=clear, type=cat, dir=ls, Ctrl+C, Ctrl+L, Ctrl+U, Ctrl+A, Ctrl+E\n", 0x07);
