@@ -750,7 +750,6 @@ int vfs_read(
     if (length == 0) {
         return 0;
     }
-    }
 
     flags = irq_save_vfs();
 
