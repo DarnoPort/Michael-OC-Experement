@@ -16,7 +16,7 @@ extern syscall_dispatch
 extern scheduler_on_timer
 extern scheduler_on_syscall
 extern scheduler_on_exec
-extern user_exit_stub
+extern user_return_esp
 
 load_idt:
     mov edx, [esp + 4]
@@ -228,13 +228,25 @@ syscall_handler_asm:
     iretd
 
 .exit_to_kernel:
+    /*
+     * We are already back in Ring 0 because SYS_EXIT arrived
+     * through int 0x80. There is no reason to manufacture an
+     * IRETD frame here.
+     *
+     * user_return_esp points at the kernel caller's return address
+     * saved by enter_user_mode(). Restore that stack and return
+     * directly to process_run_image_with_args()/syscall_run_test().
+     */
     popad
 
-    mov eax, user_exit_stub
-    mov [esp], eax
-    mov dword [esp + 4], 0x08
+    mov ax, 0x10
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
 
-    iretd
+    mov esp, [user_return_esp]
+    ret
 
 irq_common:
     pushad
