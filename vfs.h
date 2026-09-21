@@ -37,6 +37,7 @@ int vfs_get_path(
 int vfs_mkdir(const char* path);
 int vfs_create_file(const char* path);
 int vfs_remove(const char* path);
+int vfs_rename(const char* old_path, const char* new_path);
 
 struct vfs_file* vfs_open(const char* path, unsigned int flags);
 int vfs_close(struct vfs_file* file);
