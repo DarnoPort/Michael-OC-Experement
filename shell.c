@@ -155,6 +155,29 @@ static int next_token(
         return 0;
     }
 
+    if (*text == '"') {
+        text++;
+
+        while (text[length] != '\0' &&
+               text[length] != '"') {
+            if (length + 1U >= token_size) {
+                return 0;
+            }
+
+            token[length] =
+                text[length];
+            length++;
+        }
+
+        if (text[length] != '"') {
+            return 0;
+        }
+
+        token[length] = '\0';
+        *cursor = text + length + 1U;
+        return 1;
+    }
+
     while (text[length] != '\0' &&
            text[length] != ' ' &&
            text[length] != '\t') {
@@ -162,7 +185,8 @@ static int next_token(
             return 0;
         }
 
-        token[length] = text[length];
+        token[length] =
+            text[length];
         length++;
     }
 
