@@ -1,10 +1,11 @@
 #ifndef NANOOS_SYSCALLS_H
 #define NANOOS_SYSCALLS_H
 
-#define SYS_EXIT  0U
-#define SYS_WRITE 1U
+#define SYS_EXIT   0U
+#define SYS_WRITE  1U
 #define SYS_GETPID 2U
 #define SYS_YIELD  3U
+#define SYS_SBRK   4U
 
 void syscall_set_kernel_stack(unsigned int stack_top);
 

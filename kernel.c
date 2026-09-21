@@ -3,7 +3,7 @@
 #include "syscalls.h"
 #include "process.h"
 
-// NanoOS Phase 10: user mode + system calls + TSS.
+// NanoOS Phase 12: isolated address spaces + ELF loader + user heap.
 
 // -----------------------------------------------------------------------------
 // 1. Работа с портами
