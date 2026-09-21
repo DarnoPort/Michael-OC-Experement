@@ -806,6 +806,86 @@ int vfs_remove(
     return 1;
 }
 
+
+int vfs_rename(
+    const char* old_path,
+    const char* new_path
+) {
+    struct vfs_node* node;
+    struct vfs_node* old_parent;
+    struct vfs_node* new_parent;
+    struct vfs_node* existing;
+    char new_name[VFS_NAME_MAX];
+    unsigned int flags;
+
+    if (!vfs_ready ||
+        !old_path ||
+        !new_path ||
+        old_path[0] != '/' ||
+        new_path[0] != '/') {
+        return 0;
+    }
+
+    flags = irq_save_vfs();
+
+    node = vfs_lookup(old_path);
+
+    if (!node ||
+        node == &root_node ||
+        node->open_count != 0) {
+        irq_restore_vfs(flags);
+        return 0;
+    }
+
+    if (!resolve_parent(
+            old_path,
+            &old_parent,
+            new_name
+        )) {
+        irq_restore_vfs(flags);
+        return 0;
+    }
+
+    if (node->parent != old_parent) {
+        irq_restore_vfs(flags);
+        return 0;
+    }
+
+    if (!resolve_parent(
+            new_path,
+            &new_parent,
+            new_name
+        ) ||
+        new_parent != old_parent) {
+        irq_restore_vfs(flags);
+        return 0;
+    }
+
+    existing = vfs_lookup(new_path);
+
+    if (existing) {
+        irq_restore_vfs(flags);
+        return 0;
+    }
+
+    if (!diskfs_rename_node(
+            node->inode,
+            new_name
+        )) {
+        irq_restore_vfs(flags);
+        return 0;
+    }
+
+    copy_name(
+        node->name,
+        new_name,
+        string_length(new_name)
+    );
+
+    irq_restore_vfs(flags);
+    return 1;
+}
+
 static int grow_file(
     struct vfs_node* node,
     unsigned int required
