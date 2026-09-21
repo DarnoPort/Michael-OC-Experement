@@ -261,6 +261,37 @@ argv[3]=hello world
 
 Это ещё не полноценный Unix process environment: `envp` не реализован, а shell остаётся частью ядра.
 
+## Phase 23: Directory Interface — Wide Listing
+
+Phase 23 продолжает постепенное приближение shell к DOS-подобному интерфейсу. Основное изменение — компактный режим `DIR /W`, который показывает содержимое каталога в две колонки.
+
+Добавлено:
+
+- `DIR /W` для компактного двухколоночного списка;
+- `DIR /W <path>` для просмотра другого каталога;
+- обычный `DIR` сохраняет прежний подробный однострочный вывод;
+- `LS` и `LS <path>` не меняют своё поведение;
+- `HELP <command>` показывает краткое описание конкретной команды;
+- `HELP` без аргумента по-прежнему открывает общий список команд;
+- команды остаются регистронезависимыми;
+- версия проекта — `0.23`.
+
+Пример:
+
+```text
+C:\> dir /w
+[DIR]  test                                [FILE] hello.txt
+[FILE] notes.txt                           [FILE] readme.txt
+
+C:\> help dir
+DIR [path] - lists a directory. DIR /W shows entries in two columns.
+
+C:\> help cd
+CD <path> - changes the current directory.
+```
+
+`DIR /W` меняет только представление списка. Внутренняя структура VFS и пути `/...` остаются прежними.
+
 ## Phase 22: Shell Interface — DOS-like Commands
 
 Phase 22 продолжает интерфейсную работу без изменения ядра VFS, процессов или syscall ABI.
