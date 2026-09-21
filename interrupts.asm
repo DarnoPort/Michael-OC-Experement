@@ -228,14 +228,14 @@ syscall_handler_asm:
     iretd
 
 .exit_to_kernel:
-    ; We are already back in Ring 0 because SYS_EXIT arrived
-    ; through int 0x80. There is no reason to manufacture an
-    ; IRETD frame here.
-    ;
-    ; user_return_esp points at the kernel caller's return address
-    ; saved by enter_user_mode(). Restore that stack and return
-    ; directly to process_run_image_with_args()/syscall_run_test().
-    popad
+    ; SYS_EXIT arrived through int 0x80, so we are already in Ring 0.
+    ; Restore the kernel caller's stack and callee-saved registers.
+    ; The user program may have changed EBP/EBX/ESI/EDI.
+    mov esp, [user_return_esp]
+    mov ebp, [user_return_ebp]
+    mov ebx, [user_return_ebx]
+    mov esi, [user_return_esi]
+    mov edi, [user_return_edi]
 
     mov ax, 0x10
     mov ds, ax
@@ -243,7 +243,6 @@ syscall_handler_asm:
     mov fs, ax
     mov gs, ax
 
-    mov esp, [user_return_esp]
     ret
 
 irq_common:
