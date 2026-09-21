@@ -6,6 +6,7 @@
 extern void print_char(char c, unsigned char color);
 extern void print_string(const char* str, unsigned char color);
 extern void syscall_set_kernel_stack(unsigned int stack_top);
+extern char stack_top;
 
 #define USER_STACK_BASE (USER_STACK_TOP - PAGE_SIZE)
 
@@ -262,9 +263,6 @@ int process_create(const char* name) {
     if (next_pid == 0) {
         next_pid = 1;
     }
-
-    process->entry_point =
-        process->entry_point;
 
     process->user_stack_top =
         USER_STACK_TOP;
@@ -618,6 +616,6 @@ void scheduler_cleanup(void) {
 
     syscall_set_kernel_stack(
         (unsigned int)(unsigned long)
-            0
+            &stack_top
     );
 }
