@@ -33,6 +33,7 @@ int diskfs_create_node(
     unsigned int* inode_out
 );
 int diskfs_remove_node(unsigned int inode);
+int diskfs_rename_node(unsigned int inode, const char* new_name);
 int diskfs_read_file(
     unsigned int inode,
     void* buffer,
