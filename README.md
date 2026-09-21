@@ -2,9 +2,9 @@
 
 Учебная 32-битная x86 ОС.
 
-## Текущий этап — Phase 14
+## Текущий этап — Phase 15
 
-На этом этапе Michael OS получает настоящее блочное хранилище и первую persistent filesystem.
+На этом этапе Michael OS получает первый полноценный текстовый терминал поверх уже работающих VFS, DiskFS и Ring 3.
 
 Phase 13 давала VFS поверх RAMFS, поэтому файлы существовали только до reboot. Phase 14 сохраняет ту же VFS-интерфейсную часть, но заменяет RAMFS-хранилище на простой дисковый backend DiskFS.
 
@@ -64,6 +64,85 @@ Shell / user syscalls
 - per-process file descriptor table
 - файловые syscalls
 - shell file manager
+
+## Phase 15: Text Terminal
+
+Phase 15 отделяет консольный вывод и ввод от kernel.c в отдельный модуль terminal.c.
+
+Это всё ещё не графический интерфейс. Michael OS работает в стандартном VGA text mode 80x25, но теперь терминал ведёт себя как отдельная подсистема, а не просто как поток символов.
+
+Добавлено:
+
+- аппаратный курсор VGA;
+- отдельный terminal.c / terminal.h;
+- редактирование командной строки;
+- Left / Right;
+- Home / End;
+- Delete / Backspace;
+- история из 16 последних команд;
+- Up / Down для навигации по истории;
+- Tab как четыре пробела;
+- команда history;
+- команда ver;
+- cls как псевдоним clear;
+- dir как псевдоним ls;
+- type как псевдоним cat.
+
+Командная строка в этой фазе намеренно ограничена одной строкой экрана. Это упрощает редактор и оставляет сложный многострочный ввод на будущее.
+
+Пример:
+
+```text
+Michael OS 0.15
+
+> ver
+Michael OS 0.15 - 32-bit x86 experimental OS.
+
+> mkdir test
+> write test/hello.txt "Hello Michael OS!"
+> type test/hello.txt
+Hello Michael OS!
+
+> history
+  1  ver
+  2  mkdir test
+  3  write test/hello.txt "Hello Michael OS!"
+  4  type test/hello.txt
+```
+
+Стрелки Up / Down позволяют вернуть старую команду и отредактировать её до повторного запуска.
+
+Архитектура терминала:
+
+```text
+Keyboard IRQ
+     |
+     v
+terminal.c
+     |
+     +---- VGA text buffer
+     |
+     +---- command line editor
+     |
+     +---- command history
+     |
+     v
+Michael OS shell
+     |
+     v
+VFS
+     |
+     v
+DiskFS
+     |
+     v
+ATA PIO
+     |
+     v
+disk image
+```
+
+Следующая крупная ступень — загрузка ELF непосредственно из VFS и запуск программ с диска вместо единственного встроенного тестового образа.
 
 ## Phase 14: DiskFS
 
