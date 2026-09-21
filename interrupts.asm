@@ -15,6 +15,7 @@ extern exception_handler_c
 extern syscall_dispatch
 extern scheduler_on_timer
 extern scheduler_on_syscall
+extern scheduler_on_exec
 extern user_exit_stub
 
 load_idt:
