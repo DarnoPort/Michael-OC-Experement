@@ -418,6 +418,8 @@ void syscall_run_test(void) {
     int pid_a;
     int pid_b;
 
+    scheduler_init();
+
     pid_a = process_create("worker-A");
     pid_b = process_create("worker-B");
 
