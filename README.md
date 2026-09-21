@@ -479,6 +479,7 @@ User-процессы используют:
 | 6 | SYS_FILE_READ |
 | 7 | SYS_FILE_WRITE |
 | 8 | SYS_CLOSE |
+| 9 | SYS_EXEC |
 
 Команда:
 
