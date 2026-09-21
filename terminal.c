@@ -30,20 +30,6 @@ static int layout_switch_latch = 0;
 
 static unsigned char vga_font_buffer[256U * 32U];
 
-static inline unsigned char inb(
-    unsigned short port
-) {
-    unsigned char result;
-
-    __asm__ __volatile__(
-        "inb %1, %0"
-        : "=a"(result)
-        : "Nd"(port)
-    );
-
-    return result;
-}
-
 static inline void outb(
     unsigned short port,
     unsigned char data
@@ -110,7 +96,7 @@ static void terminal_install_cyrillic_font(void) {
     outb(0x3C5, 0x03);
 
     outb(0x3C4, 0x04);
-    outb(0x3C5, 0x02);
+    outb(0x3C5, 0x07);
 
     outb(0x3CE, 0x05);
     outb(0x3CF, 0x10);
