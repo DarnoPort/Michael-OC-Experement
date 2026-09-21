@@ -433,9 +433,7 @@ int process_exec_image(
         process->kernel_stack_top
     );
 
-    if (!paging_destroy_address_space(old_cr3)) {
-        return 0;
-    }
+    (void)paging_destroy_address_space(old_cr3);
 
     return 1;
 }
