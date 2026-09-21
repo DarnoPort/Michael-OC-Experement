@@ -474,12 +474,12 @@ void syscall_run_test(void) {
             '2'
         )) {
         print_string(
-            "usertest: user RAMFS syscalls PASS. Files remain in RAMFS.\n",
+            "usertest: user DiskFS syscalls PASS. Files survive reboot.\n",
             0x0A
         );
     } else {
         print_string(
-            "usertest: user RAMFS syscall verification FAILED.\n",
+            "usertest: user DiskFS syscall verification FAILED.\n",
             0x0C
         );
     }
