@@ -1,10 +1,10 @@
-# NanoOS
+# Michael OS
 
 Учебная 32-битная x86 ОС.
 
-## Текущий этап — Phase 14
+## Текущий этап — Phase 16
 
-На этом этапе NanoOS получает настоящее блочное хранилище и первую persistent filesystem.
+На этом этапе Michael OS получает первый полноценный текстовый терминал поверх уже работающих VFS, DiskFS и Ring 3.
 
 Phase 13 давала VFS поверх RAMFS, поэтому файлы существовали только до reboot. Phase 14 сохраняет ту же VFS-интерфейсную часть, но заменяет RAMFS-хранилище на простой дисковый backend DiskFS.
 
@@ -24,7 +24,7 @@ Shell / user syscalls
         v
    IDE disk image
 
-После перезагрузки NanoOS дерево каталогов и содержимое файлов восстанавливаются с диска.
+После перезагрузки Michael OS дерево каталогов и содержимое файлов восстанавливаются с диска.
 
 ## Возможности
 
@@ -52,7 +52,7 @@ Shell / user syscalls
 - отдельная user page table для каждого процесса
 - общий kernel address space
 - отдельный kernel stack для каждого процесса
-- ELF32 loader из встроенного user ELF image
+- ELF32 loader для встроенных и VFS-загруженных ELF32 image
 - PT_LOAD загрузка, BSS zero-fill и проверка границ
 - page permissions из ELF PF_* после загрузки
 - user heap через SYS_SBRK
@@ -64,10 +64,147 @@ Shell / user syscalls
 - per-process file descriptor table
 - файловые syscalls
 - shell file manager
+- запуск ELF32 программ с DiskFS через команду `run`
+
+## Phase 15: Text Terminal
+
+Phase 15 отделяет консольный вывод и ввод от kernel.c в отдельный модуль terminal.c.
+
+Это всё ещё не графический интерфейс. Michael OS работает в стандартном VGA text mode 80x25, но теперь терминал ведёт себя как отдельная подсистема, а не просто как поток символов.
+
+Добавлено:
+
+- аппаратный курсор VGA;
+- отдельный terminal.c / terminal.h;
+- редактирование командной строки;
+- Left / Right;
+- Home / End;
+- Delete / Backspace;
+- история из 16 последних команд;
+- Up / Down для навигации по истории;
+- Tab как четыре пробела;
+- команда history;
+- команда ver;
+- cls как псевдоним clear;
+- dir как псевдоним ls;
+- type как псевдоним cat.
+
+Командная строка в этой фазе намеренно ограничена одной строкой экрана. Это упрощает редактор и оставляет сложный многострочный ввод на будущее.
+
+Пример:
+
+```text
+Michael OS 0.15
+
+> ver
+Michael OS 0.16 - 32-bit x86 experimental OS.
+
+> mkdir test
+> write test/hello.txt "Hello Michael OS!"
+> type test/hello.txt
+Hello Michael OS!
+
+> history
+  1  ver
+  2  mkdir test
+  3  write test/hello.txt "Hello Michael OS!"
+  4  type test/hello.txt
+```
+
+Стрелки Up / Down позволяют вернуть старую команду и отредактировать её до повторного запуска.
+
+Архитектура терминала:
+
+```text
+Keyboard IRQ
+     |
+     v
+terminal.c
+     |
+     +---- VGA text buffer
+     |
+     +---- command line editor
+     |
+     +---- command history
+     |
+     v
+Michael OS shell
+     |
+     v
+VFS
+     |
+     v
+DiskFS
+     |
+     v
+ATA PIO
+     |
+     v
+disk image
+```
+
+Phase 16 реализует эту ступень: ELF можно хранить на DiskFS и запускать через shell без встраивания самой программы в kernel image.
+
+## Phase 16: Executable Programs
+
+Phase 16 делает важный архитектурный переход: программа теперь может быть обычным файлом на DiskFS.
+
+Добавлено:
+
+- ELF-loader принимает произвольный буфер с ELF32 image;
+- сохранён совместимый путь для старого встроенного `usertest`;
+- `process_create_from_image()` создаёт Ring 3 процесс из переданного ELF;
+- `process_run_image()` запускает пользовательский процесс и возвращает управление shell после его завершения;
+- команда `install-demo` устанавливает встроенную демонстрационную программу как `/bin/demo.elf`;
+- команда `run <path>` читает ELF через VFS, создаёт процесс и запускает его в Ring 3;
+- executable больше не обязан быть частью kernel image.
+
+Пример:
+
+```text
+> install-demo
+Installed /bin/demo.elf (... bytes).
+
+> ls /bin
+[FILE] demo.elf  ... bytes
+
+> run /bin/demo.elf
+[run] loading /bin/demo.elf into Ring 3...
+...
+[run] process 1 exited.
+```
+
+Теперь цепочка запуска выглядит так:
+
+```text
+Shell
+  |
+  v
+VFS
+  |
+  v
+DiskFS
+  |
+  v
+ELF file in memory
+  |
+  v
+ELF loader
+  |
+  v
+Process / CR3
+  |
+  v
+Ring 3
+```
+
+Это ещё не полноценный Unix `exec()`: shell пока остаётся частью kernel, а аргументы командной строки и окружение процесса ещё не передаются.
+
+Ограничение текущего этапа: DiskFS хранит максимум 64 KiB на файл, поэтому текущие ELF-программы должны укладываться в это ограничение.
 
 ## Phase 14: DiskFS
 
-DiskFS — специально маленькая файловая система для NanoOS.
+DiskFS — специально маленькая файловая система для Michael OS.
 
 Она не пытается быть FAT/ext2/Unix FS. Её задача — дать ОС настоящий persistent block-storage слой, на котором можно продолжать строить более высокие уровни.
 
@@ -75,7 +212,7 @@ DiskFS — специально маленькая файловая систем
 
 Makefile создаёт файл:
 
-nanoos.disk
+michaelos.disk
 
 Размер:
 
@@ -233,11 +370,11 @@ Used inodes: ...
 > mkdir test
 > cd test
 > touch hello.txt
-> write hello.txt "Hello NanoOS!"
+> write hello.txt "Hello Michael OS!"
 > ls
 [FILE] hello.txt  13 bytes
 > cat hello.txt
-Hello NanoOS!
+Hello Michael OS!
 
 Теперь можно выйти из QEMU:
 
@@ -341,11 +478,11 @@ make check
 
 Создание диска выполняется автоматически при make run.
 
-Если файл nanoos.disk уже существует, он не перезаписывается.
+Если файл michaelos.disk уже существует, он не перезаписывается.
 
 ## Что пока не реализовано
 
-У NanoOS всё ещё нет:
+У Michael OS всё ещё нет:
 
 - программ, загружаемых с диска;
 - fork/exec;
@@ -362,7 +499,7 @@ make check
 
 ## Дальнейшая архитектура
 
-Теперь путь к запуску программ с диска становится реальным:
+Теперь запуск программ с диска уже реализован через `run`:
 
 /bin/test.elf
       ↓
@@ -378,7 +515,7 @@ Ring 3
 
 Это уже следующая логическая большая ступень.
 
-Phase 14 прежде всего добавляет физическое хранение данных.
+Phase 16 превращает DiskFS из хранилища данных в источник исполняемых программ.
 
 После неё можно отдельно заниматься:
 
@@ -402,4 +539,4 @@ Phase 14 прежде всего добавляет физическое хра�
 - grub-mkrescue;
 - qemu-system-i386.
 
-Сгенерированные .o, .elf, .bin, .iso и nanoos.disk не хранятся в Git.
+Сгенерированные .o, .elf, .bin, .iso и michaelos.disk не хранятся в Git.

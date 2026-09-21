@@ -1,9 +1,14 @@
 #include "shell.h"
 #include "vfs.h"
 #include "diskfs.h"
+#include "terminal.h"
+#include "process.h"
+#include "memory.h"
 
 extern void print_char(char c, unsigned char color);
 extern void print_string(const char* str, unsigned char color);
+extern const unsigned char user_image_start;
+extern const unsigned char user_image_end;
 
 #define SHELL_FD_MAX 8
 
@@ -746,7 +751,7 @@ static int command_diskinfo(void) {
 
 static int command_fstest(void) {
     static const char message[] =
-        "Hello NanoOS Phase 14!";
+        "Hello Michael OS Phase 16!";
     unsigned char buffer[
         sizeof(message)
     ];
@@ -754,8 +759,8 @@ static int command_fstest(void) {
     int result;
     int ok = 1;
 
-    if (!vfs_lookup("/phase13")) {
-        if (!vfs_mkdir("/phase13")) {
+    if (!vfs_lookup("/phase15")) {
+        if (!vfs_mkdir("/phase15")) {
             print_error(
                 "fstest: ",
                 "mkdir failed."
@@ -764,9 +769,9 @@ static int command_fstest(void) {
         }
     }
 
-    if (!vfs_lookup("/phase13/hello.txt")) {
+    if (!vfs_lookup("/phase15/hello.txt")) {
         if (!vfs_create_file(
-                "/phase13/hello.txt"
+                "/phase15/hello.txt"
             )) {
             print_error(
                 "fstest: ",
@@ -778,7 +783,7 @@ static int command_fstest(void) {
 
     file =
         vfs_open(
-            "/phase13/hello.txt",
+            "/phase15/hello.txt",
             VFS_O_READ |
             VFS_O_WRITE |
             VFS_O_TRUNC
@@ -844,6 +849,297 @@ static int command_fstest(void) {
     }
 
     return ok;
+}
+
+static int shell_read_file_image(
+    const char* path,
+    unsigned char** image,
+    unsigned int* image_size
+) {
+    struct vfs_node* node;
+    struct vfs_file* file;
+    unsigned char* buffer;
+    unsigned int size;
+    unsigned int total = 0;
+
+    if (!path || !image || !image_size) {
+        return 0;
+    }
+
+    node = vfs_lookup(path);
+
+    if (!node ||
+        vfs_node_is_directory(node)) {
+        print_error(
+            "run: ",
+            "executable file not found."
+        );
+        return 0;
+    }
+
+    size = vfs_node_size(node);
+
+    if (size == 0U ||
+        size > VFS_MAX_FILE_SIZE) {
+        print_error(
+            "run: ",
+            "invalid executable size."
+        );
+        return 0;
+    }
+
+    buffer =
+        (unsigned char*)malloc(size);
+
+    if (!buffer) {
+        print_error(
+            "run: ",
+            "not enough kernel memory."
+        );
+        return 0;
+    }
+
+    file =
+        vfs_open(
+            path,
+            VFS_O_READ
+        );
+
+    if (!file) {
+        free(buffer);
+        print_error(
+            "run: ",
+            "cannot open executable."
+        );
+        return 0;
+    }
+
+    while (total < size) {
+        unsigned int remaining =
+            size - total;
+        unsigned int chunk =
+            remaining > 4096U
+                ? 4096U
+                : remaining;
+        int result =
+            vfs_read(
+                file,
+                buffer + total,
+                chunk
+            );
+
+        if (result <= 0) {
+            vfs_close(file);
+            free(buffer);
+            print_error(
+                "run: ",
+                "cannot read executable."
+            );
+            return 0;
+        }
+
+        total += (unsigned int)result;
+
+        if ((unsigned int)result < chunk &&
+            total < size) {
+            vfs_close(file);
+            free(buffer);
+            print_error(
+                "run: ",
+                "executable read was truncated."
+            );
+            return 0;
+        }
+    }
+
+    vfs_close(file);
+
+    *image = buffer;
+    *image_size = size;
+    return 1;
+}
+
+static void command_run(
+    const char* args
+) {
+    const char* cursor =
+        skip_spaces(args);
+    char argument[VFS_PATH_MAX];
+    char path[VFS_PATH_MAX];
+    unsigned char* image;
+    unsigned int image_size;
+    struct vfs_node* node;
+    int pid;
+
+    if (!next_token(
+            &cursor,
+            argument,
+            sizeof(argument)
+        ) ||
+        *skip_spaces(cursor) != '\0' ||
+        !make_path(argument, path)) {
+        print_error(
+            "run: ",
+            "usage: run <path>"
+        );
+        return;
+    }
+
+    node = vfs_lookup(path);
+
+    if (!node ||
+        vfs_node_is_directory(node)) {
+        print_error(
+            "run: ",
+            "executable file not found."
+        );
+        return;
+    }
+
+    if (!shell_read_file_image(
+            path,
+            &image,
+            &image_size
+        )) {
+        return;
+    }
+
+    print_string(
+        "[run] loading ",
+        0x0E
+    );
+    print_string(
+        path,
+        0x0F
+    );
+    print_string(
+        " into Ring 3...\n",
+        0x0E
+    );
+
+    pid = process_run_image(
+        vfs_node_name(node),
+        image,
+        image_size
+    );
+
+    free(image);
+
+    if (pid < 0) {
+        print_error(
+            "run: ",
+            "ELF loading or process startup failed."
+        );
+        return;
+    }
+
+    print_string(
+        "[run] process ",
+        0x0E
+    );
+    print_uint((unsigned int)pid, 0x0F);
+    print_string(
+        " exited.\n",
+        0x0E
+    );
+}
+
+static int command_install_demo(void) {
+    const unsigned char* image =
+        &user_image_start;
+    unsigned int image_size =
+        (unsigned int)(
+            &user_image_end -
+            &user_image_start
+        );
+    struct vfs_file* file;
+    unsigned int total = 0;
+
+    if (!vfs_lookup("/bin")) {
+        if (!vfs_mkdir("/bin")) {
+            print_error(
+                "install-demo: ",
+                "cannot create /bin."
+            );
+            return 0;
+        }
+    }
+
+    if (vfs_lookup("/bin/demo.elf")) {
+        print_error(
+            "install-demo: ",
+            "/bin/demo.elf already exists."
+        );
+        return 0;
+    }
+
+    file =
+        vfs_open(
+            "/bin/demo.elf",
+            VFS_O_WRITE |
+            VFS_O_CREATE |
+            VFS_O_TRUNC
+        );
+
+    if (!file) {
+        print_error(
+            "install-demo: ",
+            "cannot create executable."
+        );
+        return 0;
+    }
+
+    while (total < image_size) {
+        unsigned int remaining =
+            image_size - total;
+        unsigned int chunk =
+            remaining > 4096U
+                ? 4096U
+                : remaining;
+        int written =
+            vfs_write(
+                file,
+                image + total,
+                chunk
+            );
+
+        if (written <= 0 ||
+            (unsigned int)written > chunk) {
+            vfs_close(file);
+            (void)vfs_remove("/bin/demo.elf");
+            print_error(
+                "install-demo: ",
+                "failed while writing executable."
+            );
+            return 0;
+        }
+
+        total += (unsigned int)written;
+
+        if ((unsigned int)written < chunk &&
+            total < image_size) {
+            vfs_close(file);
+            (void)vfs_remove("/bin/demo.elf");
+            print_error(
+                "install-demo: ",
+                "executable write was truncated."
+            );
+            return 0;
+        }
+    }
+
+    vfs_close(file);
+
+    print_string(
+        "Installed /bin/demo.elf (",
+        0x0A
+    );
+    print_uint(image_size, 0x0F);
+    print_string(
+        " bytes).\n",
+        0x0A
+    );
+    return 1;
 }
 
 int shell_init(void) {
@@ -1047,11 +1343,72 @@ int shell_handle_command(
 
     if (command_args(
             command,
+            "history",
+            &args
+        ) &&
+        *skip_spaces(args) == '\0') {
+        terminal_print_history();
+        return 1;
+    }
+
+    if (command_args(
+            command,
+            "ver",
+            &args
+        ) &&
+        *skip_spaces(args) == '\0') {
+        print_string(
+            "Michael OS 0.16 - 32-bit x86 experimental OS.",
+            0x0E
+        );
+        print_char('\n', 0x07);
+        return 1;
+    }
+
+    if (command_args(
+            command,
+            "dir",
+            &args
+        )) {
+        command_ls(args);
+        return 1;
+    }
+
+    if (command_args(
+            command,
+            "type",
+            &args
+        )) {
+        command_cat(args);
+        return 1;
+    }
+
+    if (command_args(
+            command,
             "diskinfo",
             &args
         ) &&
         *skip_spaces(args) == '\0') {
         command_diskinfo();
+        return 1;
+    }
+
+    if (command_args(
+            command,
+            "run",
+            &args
+        )) {
+        command_run(args);
+        return 1;
+    }
+
+    if (command_args(
+            command,
+            "install-demo",
+            &args
+        ) &&
+        *skip_spaces(args) == '\0') {
+        command_install_demo();
         return 1;
     }
 

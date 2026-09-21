@@ -33,6 +33,16 @@ struct process {
 
 void scheduler_init(void);
 int process_create(const char* name);
+int process_create_from_image(
+    const char* name,
+    const unsigned char* image,
+    unsigned int image_size
+);
+int process_run_image(
+    const char* name,
+    const unsigned char* image,
+    unsigned int image_size
+);
 int scheduler_prepare_first(void);
 unsigned int scheduler_on_timer(unsigned int* interrupt_stack);
 unsigned int scheduler_on_syscall(unsigned int* interrupt_stack);

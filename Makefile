@@ -1,6 +1,6 @@
 TARGET := myos.bin
 ISO := myos.iso
-DISK := nanoos.disk
+DISK := michaelos.disk
 DISK_SIZE_MB := 16
 BUILD := build
 ISO_ROOT := $(BUILD)/isodir
@@ -14,7 +14,7 @@ QEMU := qemu-system-i386
 
 CFLAGS := -m32 -std=gnu99 -ffreestanding -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-builtin -Wall -Wextra
 LDFLAGS := -m elf_i386 -T linker.ld
-OBJS := $(BUILD)/boot.o $(BUILD)/interrupts.o $(BUILD)/kernel.o $(BUILD)/memory.o $(BUILD)/paging.o $(BUILD)/process.o $(BUILD)/elf_loader.o $(BUILD)/syscalls.o $(BUILD)/ata.o $(BUILD)/diskfs.o $(BUILD)/vfs.o $(BUILD)/shell.o $(BUILD)/user_image.o
+OBJS := $(BUILD)/boot.o $(BUILD)/interrupts.o $(BUILD)/kernel.o $(BUILD)/terminal.o $(BUILD)/memory.o $(BUILD)/paging.o $(BUILD)/process.o $(BUILD)/elf_loader.o $(BUILD)/syscalls.o $(BUILD)/ata.o $(BUILD)/diskfs.o $(BUILD)/vfs.o $(BUILD)/shell.o $(BUILD)/user_image.o
 
 .PHONY: all iso disk disk-reset run check clean
 
@@ -33,7 +33,10 @@ $(BUILD)/boot.o: boot.asm | $(BUILD)
 $(BUILD)/interrupts.o: interrupts.asm | $(BUILD)
 	$(AS) -f elf32 $< -o $@
 
-$(BUILD)/kernel.o: kernel.c memory.h paging.h process.h elf.h vfs.h shell.h | $(BUILD)
+$(BUILD)/kernel.o: kernel.c memory.h paging.h process.h elf.h vfs.h shell.h terminal.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/terminal.o: terminal.c terminal.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/memory.o: memory.c memory.h paging.h | $(BUILD)
@@ -79,13 +82,17 @@ iso: $(TARGET)
 	$(GRUB_RES) -o $(ISO) $(ISO_ROOT)
 
 disk:
+	@if [ ! -f "$(DISK)" ] && [ -f "nanoos.disk" ]; then \
+		echo "Migrating nanoos.disk -> $(DISK)..."; \
+		mv nanoos.disk "$(DISK)"; \
+	fi
 	@if [ ! -f "$(DISK)" ]; then \
-		echo "Creating $(DISK_SIZE_MB) MiB NanoOS disk image..."; \
-		dd if=/dev/zero of="$(DISK)" bs=1M count=$(DISK_SIZE_MB) status=none; \
+		echo "Creating $(DISK_SIZE_MB) MiB Michael OS disk image..."; \
+	dd if=/dev/zero of="$(DISK)" bs=1M count=$(DISK_SIZE_MB) status=none; \
 	fi
 
 disk-reset:
-	rm -f "$(DISK)"
+	rm -f "$(DISK)" nanoos.disk
 
 check: $(TARGET)
 	$(GRUB_FILE) --is-x86-multiboot $(TARGET)
