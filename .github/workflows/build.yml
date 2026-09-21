@@ -1,0 +1,29 @@
+name: Build Michael OS
+
+on:
+  push:
+    branches:
+      - "phase-*"
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib nasm binutils grub-pc-bin grub-common xorriso
+
+      - name: Build kernel
+        run: make clean && make
+
+      - name: Check Multiboot image
+        run: make check
+
+      - name: Build ISO
+        run: make iso
