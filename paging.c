@@ -37,10 +37,8 @@ static unsigned int irq_save_paging(void) {
     unsigned int flags;
 
     __asm__ __volatile__(
-        "pushfl
-"
-        "popl %0
-"
+        "pushfl\n"
+        "popl %0\n"
         "cli"
         : "=r"(flags)
         :
@@ -52,8 +50,7 @@ static unsigned int irq_save_paging(void) {
 
 static void irq_restore_paging(unsigned int flags) {
     __asm__ __volatile__(
-        "pushl %0
-"
+        "pushl %0\n"
         "popfl"
         :
         : "r"(flags)
@@ -94,10 +91,6 @@ static void write_cr3(unsigned int value) {
 
 static unsigned int align_down(unsigned int value) {
     return value & 0xFFFFF000U;
-}
-
-static unsigned int align_up(unsigned int value) {
-    return (value + PAGE_SIZE - 1U) & 0xFFFFF000U;
 }
 
 static unsigned int bitmap_byte(unsigned int page) {
