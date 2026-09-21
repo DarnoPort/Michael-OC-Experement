@@ -1,6 +1,7 @@
 #include "shell.h"
 #include "vfs.h"
 #include "diskfs.h"
+#include "terminal.h"
 
 extern void print_char(char c, unsigned char color);
 extern void print_string(const char* str, unsigned char color);
@@ -746,7 +747,7 @@ static int command_diskinfo(void) {
 
 static int command_fstest(void) {
     static const char message[] =
-        "Hello NanoOS Phase 14!";
+        "Hello Michael OS Phase 15!";
     unsigned char buffer[
         sizeof(message)
     ];
@@ -754,8 +755,8 @@ static int command_fstest(void) {
     int result;
     int ok = 1;
 
-    if (!vfs_lookup("/phase13")) {
-        if (!vfs_mkdir("/phase13")) {
+    if (!vfs_lookup("/phase15")) {
+        if (!vfs_mkdir("/phase15")) {
             print_error(
                 "fstest: ",
                 "mkdir failed."
@@ -764,9 +765,9 @@ static int command_fstest(void) {
         }
     }
 
-    if (!vfs_lookup("/phase13/hello.txt")) {
+    if (!vfs_lookup("/phase15/hello.txt")) {
         if (!vfs_create_file(
-                "/phase13/hello.txt"
+                "/phase15/hello.txt"
             )) {
             print_error(
                 "fstest: ",
@@ -778,7 +779,7 @@ static int command_fstest(void) {
 
     file =
         vfs_open(
-            "/phase13/hello.txt",
+            "/phase15/hello.txt",
             VFS_O_READ |
             VFS_O_WRITE |
             VFS_O_TRUNC
@@ -1042,6 +1043,48 @@ int shell_handle_command(
             );
         }
 
+        return 1;
+    }
+
+    if (command_args(
+            command,
+            "history",
+            &args
+        ) &&
+        *skip_spaces(args) == '\0') {
+        terminal_print_history();
+        return 1;
+    }
+
+    if (command_args(
+            command,
+            "ver",
+            &args
+        ) &&
+        *skip_spaces(args) == '\0') {
+        print_string(
+            "Michael OS 0.15 - 32-bit x86 experimental OS.",
+            0x0E
+        );
+        print_char('\n', 0x07);
+        return 1;
+    }
+
+    if (command_args(
+            command,
+            "dir",
+            &args
+        )) {
+        command_ls(args);
+        return 1;
+    }
+
+    if (command_args(
+            command,
+            "type",
+            &args
+        )) {
+        command_cat(args);
         return 1;
     }
 
