@@ -4,6 +4,7 @@
 #include "terminal.h"
 #include "process.h"
 #include "memory.h"
+#include "version.h"
 
 extern void print_char(char c, unsigned char color);
 extern void print_string(const char* str, unsigned char color);
@@ -1710,7 +1711,7 @@ int shell_handle_command(
         ) &&
         *skip_spaces(args) == '\0') {
         print_string(
-            "Michael OS 0.17 - 32-bit x86 experimental OS.",
+            "Michael OS " MICHAEL_OS_VERSION_STRING " - 32-bit x86 experimental OS.",
             0x0E
         );
         print_char('\n', 0x07);
