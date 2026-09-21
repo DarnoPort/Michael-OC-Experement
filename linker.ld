@@ -2,8 +2,9 @@ ENTRY(_start)
 
 SECTIONS
 {
-    /* Ядро начинается с 1 МБ */
+    /* Kernel starts at 1 MiB. */
     . = 1M;
+    _kernel_start = .;
 
     .text BLOCK(4K) : ALIGN(4K)
     {
@@ -26,4 +27,7 @@ SECTIONS
         *(COMMON)
         *(.bss)
     }
+
+    . = ALIGN(4K);
+    _kernel_end = .;
 }
