@@ -78,7 +78,11 @@ void idt_set_gate(unsigned char num, unsigned int base, unsigned short sel, unsi
     idt[num].flags = flags;
 }
 
-void exception_handler_c(unsigned int vector, unsigned int error_code) {
+void exception_handler_c(
+    unsigned int vector,
+    unsigned int error_code,
+    unsigned int* frame
+) {
     __asm__ __volatile__("cli");
 
     print_string("\n\n*** KERNEL PANIC ***\n", 0x4F);
@@ -87,6 +91,19 @@ void exception_handler_c(unsigned int vector, unsigned int error_code) {
 
     print_string("\nError code: ", 0x4F);
     print_hex32(error_code, 0x4F);
+
+    if (frame) {
+        print_string("\nFault EIP: ", 0x4F);
+        print_hex32(frame[0], 0x4F);
+
+        print_string("\nFault CS: ", 0x4F);
+        print_hex32(frame[1], 0x4F);
+
+        if ((frame[1] & 3U) == 3U) {
+            print_string("\nFault user ESP: ", 0x4F);
+            print_hex32(frame[3], 0x4F);
+        }
+    }
 
     if (vector == 14) {
         unsigned int fault_address;
