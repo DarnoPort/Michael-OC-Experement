@@ -1,10 +1,10 @@
-# NanoOS
+# Michael OS
 
 Учебная 32-битная x86 ОС.
 
 ## Текущий этап — Phase 14
 
-На этом этапе NanoOS получает настоящее блочное хранилище и первую persistent filesystem.
+На этом этапе Michael OS получает настоящее блочное хранилище и первую persistent filesystem.
 
 Phase 13 давала VFS поверх RAMFS, поэтому файлы существовали только до reboot. Phase 14 сохраняет ту же VFS-интерфейсную часть, но заменяет RAMFS-хранилище на простой дисковый backend DiskFS.
 
@@ -24,7 +24,7 @@ Shell / user syscalls
         v
    IDE disk image
 
-После перезагрузки NanoOS дерево каталогов и содержимое файлов восстанавливаются с диска.
+После перезагрузки Michael OS дерево каталогов и содержимое файлов восстанавливаются с диска.
 
 ## Возможности
 
@@ -67,7 +67,7 @@ Shell / user syscalls
 
 ## Phase 14: DiskFS
 
-DiskFS — специально маленькая файловая система для NanoOS.
+DiskFS — специально маленькая файловая система для Michael OS.
 
 Она не пытается быть FAT/ext2/Unix FS. Её задача — дать ОС настоящий persistent block-storage слой, на котором можно продолжать строить более высокие уровни.
 
@@ -233,11 +233,11 @@ Used inodes: ...
 > mkdir test
 > cd test
 > touch hello.txt
-> write hello.txt "Hello NanoOS!"
+> write hello.txt "Hello Michael OS!"
 > ls
 [FILE] hello.txt  13 bytes
 > cat hello.txt
-Hello NanoOS!
+Hello Michael OS!
 
 Теперь можно выйти из QEMU:
 
@@ -345,7 +345,7 @@ make check
 
 ## Что пока не реализовано
 
-У NanoOS всё ещё нет:
+У Michael OS всё ещё нет:
 
 - программ, загружаемых с диска;
 - fork/exec;
