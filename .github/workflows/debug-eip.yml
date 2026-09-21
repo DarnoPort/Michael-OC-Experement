@@ -1,0 +1,45 @@
+name: Temporary EIP debug
+
+on:
+  push:
+    branches:
+      - "phase-18-argv"
+
+permissions:
+  contents: write
+
+jobs:
+  debug:
+    if: "!contains(github.event.head_commit.message, '[debug-output]')"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib nasm binutils grub-pc-bin grub-common xorriso
+
+      - name: Build
+        run: make clean && make
+
+      - name: Dump EIP context
+        run: |
+          mkdir -p debug
+          echo "=== SYMBOLS ===" > debug/eip-map.txt
+          nm -n myos.bin | grep -E 'process_run_image|process_exec_image|scheduler_cleanup|user_exit_stub|syscall_handler_asm' >> debug/eip-map.txt
+          echo "" >> debug/eip-map.txt
+          echo "=== DISASSEMBLY 0x001060F0..0x00106220 ===" >> debug/eip-map.txt
+          objdump -d -Mintel --start-address=0x001060F0 --stop-address=0x00106220 myos.bin >> debug/eip-map.txt
+          echo "" >> debug/eip-map.txt
+          echo "=== TARGET ===" >> debug/eip-map.txt
+          echo "Fault EIP 0x00106157" >> debug/eip-map.txt
+
+      - name: Commit debug output
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add debug/eip-map.txt
+          git commit -m "[debug-output] EIP map"
+          git push
