@@ -20,6 +20,39 @@ extern const unsigned char user_args_image_end;
 static struct vfs_file* shell_files[SHELL_FD_MAX];
 static char shell_cwd[VFS_PATH_MAX] = "/";
 
+static void shell_update_prompt(void) {
+    char prompt[TERMINAL_PROMPT_MAX];
+    unsigned int position = 0;
+
+    prompt[position++] = 'C';
+    prompt[position++] = ':';
+
+    for (unsigned int i = 0;
+         shell_cwd[i] != '\0';
+         i++) {
+        if (position + 4U >= TERMINAL_PROMPT_MAX) {
+            prompt[position++] = '.';
+            prompt[position++] = '.';
+            prompt[position++] = '.';
+            break;
+        }
+
+        prompt[position++] =
+            shell_cwd[i] == '/'
+                ? '\\'
+                : shell_cwd[i];
+    }
+
+    if (position + 2U >= TERMINAL_PROMPT_MAX) {
+        position = TERMINAL_PROMPT_MAX - 3U;
+    }
+
+    prompt[position++] = '>';
+    prompt[position] = '\0';
+
+    terminal_set_prompt(prompt);
+}
+
 static unsigned int shell_length(const char* text) {
     unsigned int length = 0;
 
@@ -1592,6 +1625,7 @@ int shell_handle_command(
             canonical,
             sizeof(shell_cwd)
         );
+        shell_update_prompt();
         return 1;
     }
 
