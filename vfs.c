@@ -800,7 +800,6 @@ int vfs_write(
     if (length == 0) {
         return 0;
     }
-    }
 
     if (file->offset >
         VFS_MAX_FILE_SIZE ||
