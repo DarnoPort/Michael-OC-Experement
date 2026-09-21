@@ -2,7 +2,7 @@
 
 Учебная 32-битная x86 ОС.
 
-## Текущий этап — Phase 10
+## Текущий этап — Phase 11
 
 - GRUB Multiboot
 - собственная flat GDT
@@ -28,9 +28,15 @@
 - SYS_WRITE и SYS_EXIT
 - проверка user pointers перед SYS_WRITE
 - возврат из демонстрационной user-программы обратно в kernel shell
-- shell: help, clear, uptime, ticks, meminfo, physinfo, memtest, paging, vmtest, pfault, usertest
+- PCB и PID для пользовательских процессов
+- preemptive round-robin scheduler на IRQ0 (100 Hz)
+- отдельный kernel stack на каждый процесс
+- отдельные физические code/stack страницы на каждый процесс
+- переключение текущего user address mapping при context switch
+- SYS_GETPID и SYS_YIELD
+- shell: help, clear, uptime, ticks, meminfo, physinfo, memtest, paging, vmtest, pfault, ps, usertest
 
-## Архитектура Phase 10
+## Архитектура Phase 11
 
 NanoOS теперь имеет реальную границу привилегий:
 
@@ -92,16 +98,25 @@ Returned to kernel from Ring 3.
 
 ## Что пока намеренно не реализовано
 
-У NanoOS ещё нет процесса как самостоятельного объекта, scheduler или отдельных address spaces на каждый процесс.
+Phase 11 уже содержит процессы и вытесняющее переключение контекста, но address space пока общий для всех процессов.
 
-Phase 10 только создаёт основу:
-- Ring 3
-- TSS
-- syscalls
-- user memory
-- безопасный переход user -> kernel -> user/kernel return
+При каждом переключении scheduler меняет физические страницы, отображённые в:
+- 0x80000000 — user code
+- 0x80001000 — user stack
 
-Следующая крупная стадия может использовать этот фундамент для настоящих процессов и вытесняющей многозадачности.
+Поэтому неактивный процесс хранит свои физические страницы отдельно, а активный получает их через фиксированное user virtual address space.
+
+Пока ещё нет:
+- отдельного page directory для каждого процесса;
+- ELF loader;
+- файловой системы;
+- fork/exec;
+- IPC;
+- sleeping/blocked process states;
+- настоящего user heap;
+- полноценного процесса shell.
+
+Следующая логичная стадия — отдельные address spaces, динамический loader и блокирующие состояния процессов.
 
 ## Сборка в Ubuntu
 
@@ -113,3 +128,20 @@ make run
 ```
 
 Сгенерированные `.o`, `.bin` и `.iso` не хранятся в Git.
+
+## Демонстрация Phase 11
+
+Команда `usertest` создаёт два пользовательских процесса. Каждый процесс получает:
+- PID;
+- собственную физическую страницу кода;
+- собственную физическую страницу стека;
+- собственную страницу kernel stack;
+- сохранённый CPU context для scheduler.
+
+Таймер 100 Hz выполняет round-robin переключение между Ring 3 процессами. Тестовая программа несколько раз печатает свой PID и выполняет намеренную busy-loop нагрузку, чтобы таймер успевал вытеснять её.
+
+Команда `ps` показывает таблицу созданных процессов.
+
+## Ограничение Phase 11
+
+Это ещё не полная изоляция address space уровня современных ОС. User virtual addresses у процессов одинаковые, а page table физически общая. Изоляция достигается тем, что scheduler переключает отображённые физические code/stack страницы. Отдельные page directories для процессов являются отдельной следующей стадией.
