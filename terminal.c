@@ -44,6 +44,11 @@ static inline unsigned char inb(
     return result;
 }
 
+static inline void outb(
+    unsigned short port,
+    unsigned char data
+);
+
 static void terminal_install_cyrillic_font(void) {
     volatile unsigned char* font_memory =
         (volatile unsigned char*)0xA0000;
