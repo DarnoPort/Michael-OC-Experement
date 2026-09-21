@@ -51,12 +51,56 @@ extern void keyboard_handler_asm();
 extern void timer_handler_asm();
 extern void timer_handler_c();
 
+#define DECLARE_ISR(n) extern void isr##n();
+DECLARE_ISR(0) DECLARE_ISR(1) DECLARE_ISR(2) DECLARE_ISR(3)
+DECLARE_ISR(4) DECLARE_ISR(5) DECLARE_ISR(6) DECLARE_ISR(7)
+DECLARE_ISR(8) DECLARE_ISR(9) DECLARE_ISR(10) DECLARE_ISR(11)
+DECLARE_ISR(12) DECLARE_ISR(13) DECLARE_ISR(14) DECLARE_ISR(15)
+DECLARE_ISR(16) DECLARE_ISR(17) DECLARE_ISR(18) DECLARE_ISR(19)
+DECLARE_ISR(20) DECLARE_ISR(21) DECLARE_ISR(22) DECLARE_ISR(23)
+DECLARE_ISR(24) DECLARE_ISR(25) DECLARE_ISR(26) DECLARE_ISR(27)
+DECLARE_ISR(28) DECLARE_ISR(29) DECLARE_ISR(30) DECLARE_ISR(31)
+#undef DECLARE_ISR
+
+typedef void (*interrupt_stub_t)(void);
+static const interrupt_stub_t exception_stubs[32] = {
+    isr0,isr1,isr2,isr3,isr4,isr5,isr6,isr7,
+    isr8,isr9,isr10,isr11,isr12,isr13,isr14,isr15,
+    isr16,isr17,isr18,isr19,isr20,isr21,isr22,isr23,
+    isr24,isr25,isr26,isr27,isr28,isr29,isr30,isr31
+};
+
 void idt_set_gate(unsigned char num, unsigned int base, unsigned short sel, unsigned char flags) {
     idt[num].base_lo = base & 0xFFFF;
     idt[num].base_hi = (base >> 16) & 0xFFFF;
     idt[num].sel = sel;
     idt[num].always0 = 0;
     idt[num].flags = flags;
+}
+
+// CPU exception entry point. We stop here instead of returning into a possibly corrupted kernel.
+void exception_handler_c(unsigned int vector, unsigned int error_code) {
+    __asm__ __volatile__("cli");
+
+    print_string("\n\n*** KERNEL PANIC ***\n", 0x4F);
+    print_string("Exception: ", 0x4F);
+
+    char digits[10];
+    int n = 0;
+    unsigned int value = vector;
+    if (value == 0) digits[n++] = '0';
+    while (value > 0 && n < 10) { digits[n++] = (char)('0' + value % 10); value /= 10; }
+    while (n > 0) print_char(digits[--n], 0x4F);
+
+    print_string("\nError code: ", 0x4F);
+    n = 0;
+    value = error_code;
+    if (value == 0) digits[n++] = '0';
+    while (value > 0 && n < 10) { digits[n++] = (char)('0' + value % 10); value /= 10; }
+    while (n > 0) print_char(digits[--n], 0x4F);
+
+    print_string("\nSystem halted.\n", 0x4F);
+    for (;;) __asm__ __volatile__("hlt");
 }
 
 // --- 4. Настройка контроллера прерываний (PIC) ---
@@ -147,9 +191,9 @@ void kernel_main() {
     idtp.limit = (sizeof(struct idt_entry) * 256) - 1;
     idtp.base = (unsigned int)&idt;
 
-    // ДОБАВИТЬ ЭТОТ ЦИКЛ: Заполняем ВСЕ 256 векторов заглушками!
-    for (int i = 0; i < 256; i++) {
-        idt_set_gate(i, (unsigned int)dummy_handler_asm, 0x08, 0x8E);
+    // CPU exceptions 0..31 get dedicated stubs.
+    for (int i = 0; i < 32; i++) {
+        idt_set_gate((unsigned char)i, (unsigned int)exception_stubs[i], 0x08, 0x8E);
     }
     
     // Регистрируем наш обработчик клавиатуры на вектор 33 (IRQ1 = 32 + 1)
