@@ -6,20 +6,19 @@ section .text
 global load_idt
 global keyboard_handler_asm
 global timer_handler_asm
+global syscall_handler_asm
 global dummy_handler_asm
 
 extern keyboard_handler_c
 extern timer_handler_c
 extern exception_handler_c
+extern syscall_dispatch
+extern user_exit_stub
 
 load_idt:
     mov edx, [esp + 4]
     lidt [edx]
     ret
-
-; -----------------------------------------------------------------------------
-; CPU exceptions 0..31
-; -----------------------------------------------------------------------------
 
 %macro ISR_NOERR 1
 global isr%1
@@ -52,7 +51,7 @@ ISR_ERR   13
 ISR_ERR   14
 ISR_NOERR 15
 ISR_NOERR 16
-ISR_ERR   17
+ISR_NOERR 17
 ISR_NOERR 18
 ISR_NOERR 19
 ISR_NOERR 20
@@ -68,8 +67,6 @@ ISR_ERR   29
 ISR_ERR   30
 ISR_NOERR 31
 
-; no-error exception stack:
-;   vector, EIP, CS, EFLAGS
 isr_common_noerr:
     pushad
     mov eax, [esp + 32]
@@ -81,8 +78,6 @@ isr_common_noerr:
     add esp, 4
     iretd
 
-; error-code exception stack:
-;   vector, error, EIP, CS, EFLAGS
 isr_common_err:
     pushad
     mov eax, [esp + 32]
@@ -94,10 +89,6 @@ isr_common_err:
     popad
     add esp, 8
     iretd
-
-; -----------------------------------------------------------------------------
-; Hardware IRQs 0..15 -> IDT vectors 32..47
-; -----------------------------------------------------------------------------
 
 %macro IRQ 1
 global irq%1
@@ -123,7 +114,6 @@ IRQ 45
 IRQ 46
 IRQ 47
 
-; Timer IRQ0.
 timer_handler_asm:
     pushad
     cld
@@ -133,8 +123,6 @@ timer_handler_asm:
     out 0x20, al
     iretd
 
-; Keyboard IRQ1.
-; EOI is sent here, exactly once.
 keyboard_handler_asm:
     pushad
     cld
@@ -144,12 +132,34 @@ keyboard_handler_asm:
     out 0x20, al
     iretd
 
-; Generic IRQ handler for hardware interrupts without a dedicated driver yet.
+; System call interrupt 0x80.
+syscall_handler_asm:
+    pushad
+    cld
+
+    push esp
+    call syscall_dispatch
+    add esp, 4
+
+    test eax, eax
+    jnz .exit_to_kernel
+
+    popad
+    iretd
+
+.exit_to_kernel:
+    popad
+
+    mov eax, user_exit_stub
+    mov [esp], eax
+    mov dword [esp + 4], 0x08
+
+    iretd
+
 irq_common:
     pushad
     mov eax, [esp + 32]
 
-    ; Slave PIC IRQs 8..15 are vectors 40..47.
     cmp eax, 40
     jb .master_eoi
     mov al, 0x20
@@ -163,7 +173,6 @@ irq_common:
     add esp, 4
     iretd
 
-; Kept for compatibility with older sources; unused by the current IDT.
 dummy_handler_asm:
     cli
 .dummy_halt:
