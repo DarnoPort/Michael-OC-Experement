@@ -653,6 +653,7 @@ struct vfs_file* vfs_open(
     struct vfs_node* node;
     struct vfs_file* file;
     unsigned int irq_flags;
+    int created = 0;
 
     if (!vfs_ready ||
         !path ||
@@ -672,6 +673,9 @@ struct vfs_file* vfs_open(
                 path,
                 VFS_NODE_FILE
             );
+        if (node) {
+            created = 1;
+        }
     }
 
     if (!node ||
@@ -697,6 +701,10 @@ struct vfs_file* vfs_open(
         );
 
     if (!file) {
+        if (created) {
+            vfs_remove(path);
+        }
+
         irq_restore_vfs(irq_flags);
         return 0;
     }
