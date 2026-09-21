@@ -765,6 +765,179 @@ static void command_write(const char* args) {
     }
 }
 
+
+static int command_copy(
+    const char* args
+) {
+    const char* cursor = skip_spaces(args);
+    char source_token[VFS_PATH_MAX];
+    char destination_token[VFS_PATH_MAX];
+    char source_path[VFS_PATH_MAX];
+    char destination_path[VFS_PATH_MAX];
+    struct vfs_node* source_node;
+    struct vfs_node* destination_node;
+    struct vfs_file* source_file;
+    struct vfs_file* destination_file;
+    unsigned char buffer[4096];
+    unsigned int total = 0;
+    unsigned int source_size;
+    int destination_existed;
+    int ok = 1;
+
+    if (!next_token(
+            &cursor,
+            source_token,
+            sizeof(source_token)
+        ) ||
+        !next_token(
+            &cursor,
+            destination_token,
+            sizeof(destination_token)
+        ) ||
+        *skip_spaces(cursor) != '\0' ||
+        !make_path(
+            source_token,
+            source_path
+        ) ||
+        !make_path(
+            destination_token,
+            destination_path
+        )) {
+        print_error(
+            "copy: ",
+            "usage: copy <source> <destination>"
+        );
+        return 1;
+    }
+
+    source_node = vfs_lookup(source_path);
+
+    if (!source_node ||
+        vfs_node_is_directory(source_node)) {
+        print_error(
+            "copy: ",
+            "source file not found."
+        );
+        return 1;
+    }
+
+    destination_node = vfs_lookup(destination_path);
+
+    if (destination_node == source_node) {
+        print_error(
+            "copy: ",
+            "source and destination are the same file."
+        );
+        return 1;
+    }
+
+    if (destination_node &&
+        vfs_node_is_directory(destination_node)) {
+        print_error(
+            "copy: ",
+            "destination must be a file path."
+        );
+        return 1;
+    }
+
+    source_size = vfs_node_size(source_node);
+    destination_existed = destination_node != 0;
+
+    source_file =
+        vfs_open(
+            source_path,
+            VFS_O_READ
+        );
+
+    if (!source_file) {
+        print_error(
+            "copy: ",
+            "cannot open source file."
+        );
+        return 1;
+    }
+
+    destination_file =
+        vfs_open(
+            destination_path,
+            VFS_O_WRITE |
+            VFS_O_CREATE |
+            VFS_O_TRUNC
+        );
+
+    if (!destination_file) {
+        vfs_close(source_file);
+        print_error(
+            "copy: ",
+            "cannot create destination file."
+        );
+        return 1;
+    }
+
+    while (total < source_size) {
+        unsigned int remaining =
+            source_size - total;
+        unsigned int chunk =
+            remaining > sizeof(buffer)
+                ? sizeof(buffer)
+                : remaining;
+        int read_result =
+            vfs_read(
+                source_file,
+                buffer,
+                chunk
+            );
+
+        if (read_result <= 0 ||
+            (unsigned int)read_result != chunk) {
+            ok = 0;
+            break;
+        }
+
+        {
+            int write_result =
+                vfs_write(
+                    destination_file,
+                    buffer,
+                    chunk
+                );
+
+            if (write_result != (int)chunk) {
+                ok = 0;
+                break;
+            }
+        }
+
+        total += chunk;
+    }
+
+    vfs_close(source_file);
+    vfs_close(destination_file);
+
+    if (!ok) {
+        if (!destination_existed) {
+            (void)vfs_remove(destination_path);
+        }
+
+        print_error(
+            "copy: ",
+            "copy failed."
+        );
+        return 1;
+    }
+
+    print_string(
+        "Copied ",
+        0x0A
+    );
+    shell_print_uint(total);
+    print_string(
+        " bytes.\n",
+        0x0A
+    );
+    return 1;
+}
+
 static void command_open(const char* args) {
     char path[VFS_PATH_MAX];
     struct vfs_file* file;
@@ -1374,6 +1547,8 @@ static void command_help(
         print_string("TYPE/CAT <path> - displays a text file.\n", 0x0F);
     } else if (shell_command_name_is(topic, "write")) {
         print_string("WRITE <path> <text> - creates or replaces a text file.\n", 0x0F);
+    } else if (shell_command_name_is(topic, "copy")) {
+        print_string("COPY <source> <destination> - copies one file to another path.\n", 0x0F);
     } else if (shell_command_name_is(topic, "echo")) {
         print_string("ECHO <text> - prints text to the terminal.\n", 0x0F);
     } else if (shell_command_name_is(topic, "pwd")) {
@@ -1949,6 +2124,15 @@ int shell_handle_command(
             &args
         )) {
         command_cat(args);
+        return 1;
+    }
+
+    if (command_args(
+            command,
+            "copy",
+            &args
+        )) {
+        command_copy(args);
         return 1;
     }
 
