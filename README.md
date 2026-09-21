@@ -2,7 +2,7 @@
 
 Учебная 32-битная x86 ОС.
 
-## Текущий этап — Phase 9
+## Текущий этап — Phase 10
 
 - GRUB Multiboot
 - собственная flat GDT
@@ -15,55 +15,93 @@
 - физический allocator страниц 4 КБ на основе Multiboot memory map
 - kernel heap с malloc/free
 - 32-битный paging без PAE
-- 4 КБ page tables для low memory
-- read-only kernel text/rodata страницы
-- null page не отображается
-- CR0.WP включён
-- отдельная kernel virtual-memory область 0xC0000000–0xC3FFFFFF
-- virtual page allocator с отображением виртуальных страниц на физические
-- kernel heap работает поверх virtual memory
+- kernel virtual-memory область 0xC0000000–0xC3FFFFFF
+- virtual page allocator
 - Page Fault с расшифровкой адреса и error code
-- shell: help, clear, uptime, ticks, meminfo, physinfo, memtest, paging, vmtest, pfault
+- null page protection
+- CR0.WP
+- user VM область 0x80000000–0x803FFFFF
+- user code и user stack с отдельными правами страниц
+- GDT-сегменты Ring 3
+- 32-битный TSS с отдельным kernel stack при входе из Ring 3
+- DPL3 system call gate на interrupt 0x80
+- SYS_WRITE и SYS_EXIT
+- проверка user pointers перед SYS_WRITE
+- возврат из демонстрационной user-программы обратно в kernel shell
+- shell: help, clear, uptime, ticks, meminfo, physinfo, memtest, paging, vmtest, pfault, usertest
 
-## Память
+## Архитектура Phase 10
 
-Phase 8 дал физический page allocator и kernel heap.
-
-Phase 9 добавляет слой виртуальной памяти:
+NanoOS теперь имеет реальную границу привилегий:
 
 ```
-malloc()
-   ↓
-kernel heap
-   ↓
-virtual page allocator
-   ↓
-page tables
-   ↓
-physical page allocator
-   ↓
-RAM
+Ring 3
+  |
+  | int 0x80
+  v
+TSS.esp0
+  |
+  v
+Ring 0
+  |
+  +-- syscall dispatcher
+  +-- kernel heap
+  +-- physical memory
+  +-- virtual memory
 ```
 
-Поэтому физические страницы, выданные heap, больше не обязаны идти подряд. Виртуальный адрес heap остаётся непрерывным.
+Пользовательский тестовый код запускается в отдельной user VM-области:
 
-Первые 4 МБ физической памяти отображаются через 4 КБ page table. Нулевая страница `0x00000000` намеренно не отображается. Остальная физическая память до 4 ГБ на этапе bootstrap отображается identity mapping через 4 МБ pages. Область `0xC0000000–0xC3FFFFFF` заменена на 4 КБ page tables виртуальной памяти ядра.
+```
+0x80000000  user code
+0x80001000  user stack
+0x80002000  end of test stack
+```
 
-Kernel text и rodata отображаются без разрешения записи. После включения `CR0.WP` попытка записи в такую страницу вызывает Page Fault даже в Ring 0.
+Kernel address space остаётся недоступным из Ring 3, потому что соответствующие PDE/PTE не имеют PAGE_USER.
 
-## Команды Phase 9
+SYS_WRITE принимает:
+- EAX = 1
+- EBX = user buffer
+- ECX = length
+
+Ядро проверяет весь диапазон пользовательской памяти перед чтением.
+
+SYS_EXIT завершает демонстрационный процесс и возвращает управление исходному kernel stack, после чего usertest продолжает выполнение в Ring 0.
+
+## Команды Phase 10
 
 ```text
+usertest
 paging
 vmtest
 pfault
+memtest
 ```
 
-`paging` показывает состояние CR0/CR3/CR4 и использование VM-области.
+Ожидаемый результат usertest:
 
-`vmtest` выделяет две виртуальные страницы, проверяет перевод виртуальных адресов в физические, чтение/запись, затем освобождает страницы.
+```text
+> usertest
+Entering Ring 3...
+Hello from Ring 3! System call works.
+[syscall] user program exited.
+Returned to kernel from Ring 3.
+>
+```
 
-`pfault` намеренно обращается к нулевой странице и должен завершить работу ядра с диагностикой Page Fault.
+## Что пока намеренно не реализовано
+
+У NanoOS ещё нет процесса как самостоятельного объекта, scheduler или отдельных address spaces на каждый процесс.
+
+Phase 10 только создаёт основу:
+- Ring 3
+- TSS
+- syscalls
+- user memory
+- безопасный переход user -> kernel -> user/kernel return
+
+Следующая крупная стадия может использовать этот фундамент для настоящих процессов и вытесняющей многозадачности.
 
 ## Сборка в Ubuntu
 
