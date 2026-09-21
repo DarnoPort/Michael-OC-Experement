@@ -1,3 +1,5 @@
+#include "memory.h"
+
 // NanoOS Phase 8: Physical memory + kernel heap + timer + keyboard.
 
 // -----------------------------------------------------------------------------
@@ -451,9 +453,6 @@ static void print_uptime(void) {
 // -----------------------------------------------------------------------------
 
 void kernel_main(unsigned int magic, unsigned int info_addr) {
-    multiboot_magic = magic;
-    multiboot_info_addr = info_addr;
-
     __asm__ __volatile__("cli");
 
     clear_screen();
@@ -472,7 +471,15 @@ void kernel_main(unsigned int magic, unsigned int info_addr) {
     init_pic();
     init_pit(100);
 
-    print_string("=== NanoOS Phase 7: Memory map ===\n", 0x0A);
+    print_string("=== NanoOS Phase 8: Physical memory + kernel heap ===\n", 0x0A);
+
+    if (!memory_init(magic, info_addr)) {
+        print_string("WARNING: physical memory manager initialization failed.\n", 0x0C);
+    } else {
+        print_string("Physical page allocator initialized.\n", 0x0E);
+        print_string("Kernel heap initialized on demand.\n", 0x0E);
+    }
+
     print_string("Type 'help' for commands.\n", 0x0E);
     print_string("> ", 0x0B);
 
@@ -480,11 +487,13 @@ void kernel_main(unsigned int magic, unsigned int info_addr) {
 
     while (1) {
         if (cmd_ready) {
-            // Keep keyboard IRQs from modifying the command while we consume it.
             __asm__ __volatile__("cli");
 
             if (strcmp(cmd_buffer, "help") == 0) {
-                print_string("Commands: help, clear, uptime, ticks, meminfo\n", 0x0E);
+                print_string(
+                    "Commands: help, clear, uptime, ticks, meminfo, physinfo, memtest\n",
+                    0x0E
+                );
             } else if (strcmp(cmd_buffer, "uptime") == 0) {
                 print_uptime();
             } else if (strcmp(cmd_buffer, "ticks") == 0) {
@@ -492,7 +501,11 @@ void kernel_main(unsigned int magic, unsigned int info_addr) {
                 print_uint(timer_ticks, 0x0F);
                 print_char('\n', 0x07);
             } else if (strcmp(cmd_buffer, "meminfo") == 0) {
-                show_meminfo();
+                memory_print_info();
+            } else if (strcmp(cmd_buffer, "physinfo") == 0) {
+                memory_print_stats();
+            } else if (strcmp(cmd_buffer, "memtest") == 0) {
+                memory_test();
             } else if (strcmp(cmd_buffer, "clear") == 0) {
                 clear_screen();
             } else if (strcmp(cmd_buffer, "sleep") == 0) {
@@ -505,8 +518,8 @@ void kernel_main(unsigned int magic, unsigned int info_addr) {
 
             cmd_idx = 0;
             cmd_ready = 0;
-
             print_string("> ", 0x0B);
+
             __asm__ __volatile__("sti");
         }
 
