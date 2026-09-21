@@ -12,7 +12,12 @@ extern void load_tss(void);
 extern void enter_user_mode(unsigned int eip, unsigned int esp);
 
 extern char stack_top;
+
 volatile unsigned int user_return_esp = 0;
+volatile unsigned int user_return_ebp = 0;
+volatile unsigned int user_return_ebx = 0;
+volatile unsigned int user_return_esi = 0;
+volatile unsigned int user_return_edi = 0;
 
 struct tss32 {
     unsigned int prev_tss;
