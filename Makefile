@@ -40,7 +40,10 @@ $(BUILD)/memory.o: memory.c memory.h paging.h | $(BUILD)
 $(BUILD)/paging.o: paging.c paging.h memory.h linker.ld | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/process.o: process.c process.h memory.h paging.h syscalls.h | $(BUILD)\n\t$(CC) $(CFLAGS) -c $< -o $@\n\n$(BUILD)/syscalls.o: syscalls.c syscalls.h memory.h paging.h process.h | $(BUILD)
+$(BUILD)/process.o: process.c process.h memory.h paging.h syscalls.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/syscalls.o: syscalls.c syscalls.h memory.h paging.h process.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/user_program.o: user_program.asm | $(BUILD)
