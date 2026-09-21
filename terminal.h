@@ -5,6 +5,7 @@
 #define TERMINAL_HEIGHT 25U
 #define TERMINAL_INPUT_MAX 77U
 #define TERMINAL_HISTORY_MAX 16U
+#define TERMINAL_PROMPT_MAX 64U
 
 void terminal_init(void);
 void terminal_clear(void);
@@ -15,6 +16,7 @@ void print_uint(unsigned int value, unsigned char color);
 void print_hex32(unsigned int value, unsigned char color);
 void print_hex64(unsigned int high, unsigned int low, unsigned char color);
 
+void terminal_set_prompt(const char* prompt);
 void terminal_prompt(void);
 void terminal_keyboard_scancode(unsigned char scancode);
 
