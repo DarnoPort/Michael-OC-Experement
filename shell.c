@@ -356,6 +356,40 @@ static int make_path(
     return 1;
 }
 
+
+static int shell_command_name_is(
+    const char* value,
+    const char* expected
+) {
+    unsigned int i = 0;
+
+    if (!value || !expected) {
+        return 0;
+    }
+
+    while (value[i] != '\0' &&
+           expected[i] != '\0') {
+        if (shell_lower_char(value[i]) !=
+            shell_lower_char(expected[i])) {
+            return 0;
+        }
+
+        i++;
+    }
+
+    return value[i] == '\0' &&
+           expected[i] == '\0';
+}
+
+static void shell_print_spaces(
+    unsigned int count
+) {
+    while (count > 0U) {
+        print_char(' ', 0x07);
+        count--;
+    }
+}
+
 static void print_error(
     const char* command,
     const char* message
@@ -491,6 +525,122 @@ static void command_ls(const char* args) {
             child =
                 vfs_node_next_sibling(child);
         }
+    }
+}
+
+
+static void command_dir_wide(
+    const char* args
+) {
+    char path[VFS_PATH_MAX];
+    struct vfs_node* node;
+    struct vfs_node* child;
+    unsigned int column = 0;
+
+    args = skip_spaces(args);
+
+    if (args &&
+        *args != '\0') {
+        if (args[0] != '/' ||
+            args[1] != 'w' ||
+            (args[2] != '\0' &&
+             args[2] != ' ' &&
+             args[2] != '\t')) {
+            if (!make_path(args, path)) {
+                print_error("dir: ", "invalid path.");
+                return;
+            }
+        } else {
+            shell_copy(
+                path,
+                shell_cwd,
+                sizeof(path)
+            );
+        }
+    } else {
+        shell_copy(
+            path,
+            shell_cwd,
+            sizeof(path)
+        );
+    }
+
+    if (!args || *args == '\0' ||
+        (args[0] == '/' &&
+         args[1] == 'w' &&
+         (args[2] == '\0' ||
+          args[2] == ' ' ||
+          args[2] == '\t'))) {
+        /* path is already current directory. */
+    }
+
+    node = vfs_lookup(path);
+
+    if (!node) {
+        print_error("dir: ", "path not found.");
+        return;
+    }
+
+    if (!vfs_node_is_directory(node)) {
+        print_string(
+            vfs_node_name(node),
+            0x0F
+        );
+        print_char('\n', 0x07);
+        return;
+    }
+
+    child = vfs_node_first_child(node);
+
+    if (!child) {
+        print_string("(empty)\n", 0x08);
+        return;
+    }
+
+    while (child) {
+        char prefix[7];
+        unsigned int name_length = 0;
+        unsigned int display_length;
+
+        if (vfs_node_is_directory(child)) {
+            shell_copy(prefix, "[DIR] ", sizeof(prefix));
+        } else {
+            shell_copy(prefix, "[FILE] ", sizeof(prefix));
+        }
+
+        print_string(prefix, 0x07);
+        print_string(vfs_node_name(child), 0x0F);
+
+        while (vfs_node_name(child)[name_length] != '\0') {
+            name_length++;
+        }
+
+        display_length =
+            6U + name_length;
+
+        if (!vfs_node_is_directory(child)) {
+            display_length = 7U + name_length;
+        }
+
+        column++;
+
+        if (column >= 2U) {
+            print_char('\n', 0x07);
+            column = 0;
+        } else {
+            if (display_length < 39U) {
+                shell_print_spaces(39U - display_length);
+            } else {
+                print_char(' ', 0x07);
+            }
+        }
+
+        child =
+            vfs_node_next_sibling(child);
+    }
+
+    if (column != 0U) {
+        print_char('\n', 0x07);
     }
 }
 
@@ -1199,6 +1349,93 @@ static int command_echo(
     print_string(text, 0x0F);
     print_char('\n', 0x07);
     return 1;
+}
+
+
+static void command_help(
+    const char* args
+) {
+    const char* cursor = skip_spaces(args);
+    char topic[32];
+
+    if (!cursor || *cursor == '\0') {
+        print_string("Use HELP <command> for a brief description.\n", 0x0E);
+        return;
+    }
+
+    if (!next_token(&cursor, topic, sizeof(topic)) ||
+        *skip_spaces(cursor) != '\0') {
+        print_error("help: ", "usage: help [command]");
+        return;
+    }
+
+    if (shell_command_name_is(topic, "help")) {
+        print_string("HELP [command] - shows the command list or a brief command description.\n", 0x0F);
+    } else if (shell_command_name_is(topic, "dir") ||
+               shell_command_name_is(topic, "ls")) {
+        print_string("DIR [path] - lists a directory. DIR /W shows entries in two columns.\n", 0x0F);
+    } else if (shell_command_name_is(topic, "cd")) {
+        print_string("CD <path> - changes the current directory.\n", 0x0F);
+    } else if (shell_command_name_is(topic, "mkdir")) {
+        print_string("MKDIR <path> - creates a directory.\n", 0x0F);
+    } else if (shell_command_name_is(topic, "touch")) {
+        print_string("TOUCH <path> - creates an empty file.\n", 0x0F);
+    } else if (shell_command_name_is(topic, "del") ||
+               shell_command_name_is(topic, "rm")) {
+        print_string("DEL/RM <path> - removes a file or an empty directory.\n", 0x0F);
+    } else if (shell_command_name_is(topic, "type") ||
+               shell_command_name_is(topic, "cat")) {
+        print_string("TYPE/CAT <path> - displays a text file.\n", 0x0F);
+    } else if (shell_command_name_is(topic, "write")) {
+        print_string("WRITE <path> <text> - creates or replaces a text file.\n", 0x0F);
+    } else if (shell_command_name_is(topic, "echo")) {
+        print_string("ECHO <text> - prints text to the terminal.\n", 0x0F);
+    } else if (shell_command_name_is(topic, "pwd")) {
+        print_string("PWD - shows the internal VFS path of the current directory.\n", 0x0F);
+    } else if (shell_command_name_is(topic, "open")) {
+        print_string("OPEN <path> - opens a file and returns a shell file descriptor.\n", 0x0F);
+    } else if (shell_command_name_is(topic, "read")) {
+        print_string("READ <fd> [length] - reads data from an open file.\n", 0x0F);
+    } else if (shell_command_name_is(topic, "close")) {
+        print_string("CLOSE <fd> - closes a shell file descriptor.\n", 0x0F);
+    } else if (shell_command_name_is(topic, "run")) {
+        print_string("RUN <path> [args...] - loads and runs an ELF32 program.\n", 0x0F);
+    } else if (shell_command_name_is(topic, "ver")) {
+        print_string("VER - shows the current Michael OS version.\n", 0x0F);
+    } else if (shell_command_name_is(topic, "history")) {
+        print_string("HISTORY - shows previously entered commands.\n", 0x0F);
+    } else if (shell_command_name_is(topic, "clear") ||
+               shell_command_name_is(topic, "cls")) {
+        print_string("CLEAR/CLS - clears the terminal screen.\n", 0x0F);
+    } else if (shell_command_name_is(topic, "uptime")) {
+        print_string("UPTIME - shows time since the kernel timer started.\n", 0x0F);
+    } else if (shell_command_name_is(topic, "layout")) {
+        print_string("LAYOUT [en|ru] - selects the keyboard layout.\n", 0x0F);
+    } else if (shell_command_name_is(topic, "help")) {
+        print_string("HELP - shows help for shell commands.\n", 0x0F);
+    } else if (shell_command_name_is(topic, "fstest")) {
+        print_string("FSTEST - checks basic VFS/DiskFS file operations.\n", 0x0F);
+    } else if (shell_command_name_is(topic, "diskinfo")) {
+        print_string("DISKINFO - shows basic DiskFS storage statistics.\n", 0x0F);
+    } else if (shell_command_name_is(topic, "install-demo")) {
+        print_string("INSTALL-DEMO - installs the embedded demo ELF on DiskFS.\n", 0x0F);
+    } else if (shell_command_name_is(topic, "install-exec-test")) {
+        print_string("INSTALL-EXEC-TEST - installs the embedded exec() test ELF.\n", 0x0F);
+    } else if (shell_command_name_is(topic, "install-args-test")) {
+        print_string("INSTALL-ARGS-TEST - installs the embedded argc/argv test ELF.\n", 0x0F);
+    } else if (shell_command_name_is(topic, "meminfo") ||
+               shell_command_name_is(topic, "physinfo") ||
+               shell_command_name_is(topic, "memtest") ||
+               shell_command_name_is(topic, "paging") ||
+               shell_command_name_is(topic, "vmtest") ||
+               shell_command_name_is(topic, "pfault") ||
+               shell_command_name_is(topic, "ps") ||
+               shell_command_name_is(topic, "usertest") ||
+               shell_command_name_is(topic, "ticks")) {
+        print_string("This is a diagnostic command for inspecting Michael OS internals.\n", 0x0F);
+    } else {
+        print_string("help: no description for that command.\n", 0x0C);
+    }
 }
 
 static int command_install_demo(void) {
