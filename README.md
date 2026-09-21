@@ -2,7 +2,7 @@
 
 Учебная 32-битная x86 ОС.
 
-## Текущий этап — Phase 15
+## Текущий этап — Phase 16
 
 На этом этапе Michael OS получает первый полноценный текстовый терминал поверх уже работающих VFS, DiskFS и Ring 3.
 
@@ -52,7 +52,7 @@ Shell / user syscalls
 - отдельная user page table для каждого процесса
 - общий kernel address space
 - отдельный kernel stack для каждого процесса
-- ELF32 loader из встроенного user ELF image
+- ELF32 loader для встроенных и VFS-загруженных ELF32 image
 - PT_LOAD загрузка, BSS zero-fill и проверка границ
 - page permissions из ELF PF_* после загрузки
 - user heap через SYS_SBRK
@@ -64,6 +64,7 @@ Shell / user syscalls
 - per-process file descriptor table
 - файловые syscalls
 - shell file manager
+- запуск ELF32 программ с DiskFS через команду `run`
 
 ## Phase 15: Text Terminal
 
@@ -96,7 +97,7 @@ Phase 15 отделяет консольный вывод и ввод от kerne
 Michael OS 0.15
 
 > ver
-Michael OS 0.15 - 32-bit x86 experimental OS.
+Michael OS 0.16 - 32-bit x86 experimental OS.
 
 > mkdir test
 > write test/hello.txt "Hello Michael OS!"
@@ -142,7 +143,64 @@ ATA PIO
 disk image
 ```
 
-Следующая крупная ступень — загрузка ELF непосредственно из VFS и запуск программ с диска вместо единственного встроенного тестового образа.
+Phase 16 реализует эту ступень: ELF можно хранить на DiskFS и запускать через shell без встраивания самой программы в kernel image.
+
+## Phase 16: Executable Programs
+
+Phase 16 делает важный архитектурный переход: программа теперь может быть обычным файлом на DiskFS.
+
+Добавлено:
+
+- ELF-loader принимает произвольный буфер с ELF32 image;
+- сохранён совместимый путь для старого встроенного `usertest`;
+- `process_create_from_image()` создаёт Ring 3 процесс из переданного ELF;
+- `process_run_image()` запускает пользовательский процесс и возвращает управление shell после его завершения;
+- команда `install-demo` устанавливает встроенную демонстрационную программу как `/bin/demo.elf`;
+- команда `run <path>` читает ELF через VFS, создаёт процесс и запускает его в Ring 3;
+- executable больше не обязан быть частью kernel image.
+
+Пример:
+
+```text
+> install-demo
+Installed /bin/demo.elf (... bytes).
+
+> ls /bin
+[FILE] demo.elf  ... bytes
+
+> run /bin/demo.elf
+[run] loading /bin/demo.elf into Ring 3...
+...
+[run] process 1 exited.
+```
+
+Теперь цепочка запуска выглядит так:
+
+```text
+Shell
+  |
+  v
+VFS
+  |
+  v
+DiskFS
+  |
+  v
+ELF file in memory
+  |
+  v
+ELF loader
+  |
+  v
+Process / CR3
+  |
+  v
+Ring 3
+```
+
+Это ещё не полноценный Unix `exec()`: shell пока остаётся частью kernel, а аргументы командной строки и окружение процесса ещё не передаются.
+
+Ограничение текущего этапа: DiskFS хранит максимум 64 KiB на файл, поэтому текущие ELF-программы должны укладываться в это ограничение.
 
 ## Phase 14: DiskFS
 
@@ -441,7 +499,7 @@ make check
 
 ## Дальнейшая архитектура
 
-Теперь путь к запуску программ с диска становится реальным:
+Теперь запуск программ с диска уже реализован через `run`:
 
 /bin/test.elf
       ↓
@@ -457,7 +515,7 @@ Ring 3
 
 Это уже следующая логическая большая ступень.
 
-Phase 14 прежде всего добавляет физическое хранение данных.
+Phase 16 превращает DiskFS из хранилища данных в источник исполняемых программ.
 
 После неё можно отдельно заниматься:
 
