@@ -79,8 +79,9 @@ static void activate_process(int index) {
         &processes[index];
 
     paging_switch_directory(process->cr3);
+    /* TSS.esp0 must point one byte past the allocated stack page. */
     syscall_set_kernel_stack(
-        process->kernel_stack_top
+        process->kernel_stack_top + PAGE_SIZE
     );
 }
 
@@ -113,9 +114,11 @@ static int find_next_runnable(int from_index) {
 static void build_initial_context(
     struct process* process
 ) {
+    /* vm_alloc_pages() returns the page base; the stack grows downward,
+     * so its initial top is one page above that base. */
     unsigned int* stack =
         (unsigned int*)(unsigned long)
-            process->kernel_stack_top;
+            (process->kernel_stack_top + PAGE_SIZE);
 
     /*
      * Layout matches:
@@ -651,8 +654,9 @@ int process_exec_image(
     build_initial_context(process);
 
     paging_switch_directory(new_cr3);
+    /* TSS.esp0 must point one byte past the allocated stack page. */
     syscall_set_kernel_stack(
-        process->kernel_stack_top
+        process->kernel_stack_top + PAGE_SIZE
     );
 
     (void)paging_destroy_address_space(old_cr3);
