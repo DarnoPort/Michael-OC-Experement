@@ -1015,6 +1015,11 @@ static int command_move(
     char new_token[VFS_PATH_MAX];
     char old_path[VFS_PATH_MAX];
     char new_path[VFS_PATH_MAX];
+    char move_path[VFS_PATH_MAX];
+    struct vfs_node* source_node;
+    struct vfs_node* destination_node;
+    unsigned int destination_length;
+    unsigned int source_name_length;
 
     if (!next_token(
             &cursor,
@@ -1040,6 +1045,82 @@ static int command_move(
             "usage: move <source> <destination>"
         );
         return 1;
+    }
+
+    source_node = vfs_lookup(old_path);
+    destination_node = vfs_lookup(new_path);
+
+    if (source_node &&
+        destination_node &&
+        vfs_node_is_directory(destination_node)) {
+        destination_length = shell_length(new_path);
+        source_name_length =
+            shell_length(vfs_node_name(source_node));
+
+        if (destination_length == 1U &&
+            new_path[0] == '/') {
+            if (source_name_length + 2U >
+                VFS_PATH_MAX) {
+                print_error(
+                    "move: ",
+                    "destination path is too long."
+                );
+                return 1;
+            }
+
+            move_path[0] = '/';
+
+            for (unsigned int i = 0;
+                 i < source_name_length;
+                 i++) {
+                move_path[i + 1U] =
+                    vfs_node_name(source_node)[i];
+            }
+
+            move_path[source_name_length + 1U] =
+                '\0';
+        } else {
+            if (destination_length +
+                source_name_length + 2U >
+                VFS_PATH_MAX) {
+                print_error(
+                    "move: ",
+                    "destination path is too long."
+                );
+                return 1;
+            }
+
+            for (unsigned int i = 0;
+                 i < destination_length;
+                 i++) {
+                move_path[i] = new_path[i];
+            }
+
+            move_path[destination_length] = '/';
+
+            for (unsigned int i = 0;
+                 i < source_name_length;
+                 i++) {
+                move_path[
+                    destination_length + 1U + i
+                ] = vfs_node_name(source_node)[i];
+            }
+
+            move_path[
+                destination_length +
+                source_name_length + 1U
+            ] = '\0';
+        }
+
+        for (unsigned int i = 0;
+             i < VFS_PATH_MAX;
+             i++) {
+            new_path[i] = move_path[i];
+
+            if (move_path[i] == '\0') {
+                break;
+            }
+        }
     }
 
     if (!vfs_move(
