@@ -1771,7 +1771,7 @@ static void command_help(
                shell_command_name_is(topic, "rename")) {
         print_string("REN/RENAME <old> <new> - renames a file or directory in the same directory.\n", 0x0F);
     } else if (shell_command_name_is(topic, "move")) {
-        print_string("MOVE <source> <destination> - moves a file or directory to another directory.\n", 0x0F);
+        print_string("MOVE <source> <destination> - moves a file or directory; an existing destination directory receives the source name.\n", 0x0F);
     } else if (shell_command_name_is(topic, "echo")) {
         print_string("ECHO <text> - prints text to the terminal.\n", 0x0F);
     } else if (shell_command_name_is(topic, "pwd")) {
