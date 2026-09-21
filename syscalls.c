@@ -114,6 +114,90 @@ int syscall_init(void) {
     return 1;
 }
 
+static int syscall_load_vfs_image(
+    const char* path,
+    unsigned char** image,
+    unsigned int* image_size
+) {
+    struct vfs_node* node;
+    struct vfs_file* file;
+    unsigned char* buffer;
+    unsigned int size;
+    unsigned int total = 0;
+
+    if (!path || !image || !image_size) {
+        return 0;
+    }
+
+    node = vfs_lookup(path);
+
+    if (!node ||
+        vfs_node_is_directory(node)) {
+        return 0;
+    }
+
+    size = vfs_node_size(node);
+
+    if (size == 0U ||
+        size > VFS_MAX_FILE_SIZE) {
+        return 0;
+    }
+
+    buffer =
+        (unsigned char*)malloc(size);
+
+    if (!buffer) {
+        return 0;
+    }
+
+    file =
+        vfs_open(
+            path,
+            VFS_O_READ
+        );
+
+    if (!file) {
+        free(buffer);
+        return 0;
+    }
+
+    while (total < size) {
+        unsigned int remaining =
+            size - total;
+        unsigned int chunk =
+            remaining > 4096U
+                ? 4096U
+                : remaining;
+        int result =
+            vfs_read(
+                file,
+                buffer + total,
+                chunk
+            );
+
+        if (result <= 0) {
+            vfs_close(file);
+            free(buffer);
+            return 0;
+        }
+
+        total += (unsigned int)result;
+
+        if ((unsigned int)result < chunk &&
+            total < size) {
+            vfs_close(file);
+            free(buffer);
+            return 0;
+        }
+    }
+
+    vfs_close(file);
+
+    *image = buffer;
+    *image_size = size;
+    return 1;
+}
+
 int syscall_dispatch(void* registers_ptr) {
     struct syscall_registers* registers =
         (struct syscall_registers*)registers_ptr;
@@ -359,6 +443,45 @@ int syscall_dispatch(void* registers_ptr) {
                 ? 0U
                 : 0xFFFFFFFFU;
         return 0;
+    }
+
+    if (registers->eax == SYS_EXEC) {
+        char path[VFS_PATH_MAX];
+        unsigned char* image;
+        unsigned int image_size;
+
+        if (!copy_user_path(
+                scheduler_current_cr3(),
+                registers->ebx,
+                path,
+                sizeof(path)
+            )) {
+            registers->eax = 0xFFFFFFFFU;
+            return 0;
+        }
+
+        if (!syscall_load_vfs_image(
+                path,
+                &image,
+                &image_size
+            )) {
+            registers->eax = 0xFFFFFFFFU;
+            return 0;
+        }
+
+        if (!process_exec_image(
+                path,
+                image,
+                image_size
+            )) {
+            free(image);
+            registers->eax = 0xFFFFFFFFU;
+            return 0;
+        }
+
+        free(image);
+        registers->eax = 0;
+        return 3;
     }
 
     if (registers->eax == SYS_YIELD) {
