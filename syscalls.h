@@ -10,6 +10,7 @@
 #define SYS_FILE_READ   6U
 #define SYS_FILE_WRITE  7U
 #define SYS_CLOSE       8U
+#define SYS_EXEC        9U
 
 void syscall_set_kernel_stack(unsigned int stack_top);
 
