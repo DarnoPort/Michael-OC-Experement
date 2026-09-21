@@ -10,9 +10,9 @@ GRUB_FILE := grub-file
 GRUB_RES := grub-mkrescue
 QEMU := qemu-system-i386
 
-CFLAGS := -m32 -std=gnu99 -ffreestanding -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -Wall -Wextra
+CFLAGS := -m32 -std=gnu99 -ffreestanding -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-builtin -Wall -Wextra
 LDFLAGS := -m elf_i386 -T linker.ld
-OBJS := $(BUILD)/boot.o $(BUILD)/interrupts.o $(BUILD)/kernel.o
+OBJS := $(BUILD)/boot.o $(BUILD)/interrupts.o $(BUILD)/kernel.o $(BUILD)/memory.o
 
 .PHONY: all iso run check clean
 
@@ -31,7 +31,10 @@ $(BUILD)/boot.o: boot.asm | $(BUILD)
 $(BUILD)/interrupts.o: interrupts.asm | $(BUILD)
 	$(AS) -f elf32 $< -o $@
 
-$(BUILD)/kernel.o: kernel.c | $(BUILD)
+$(BUILD)/kernel.o: kernel.c memory.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/memory.o: memory.c memory.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 iso: $(TARGET)

@@ -1,4 +1,4 @@
-// NanoOS Phase 7: Multiboot memory map + timer + keyboard.
+// NanoOS Phase 8: Physical memory + kernel heap + timer + keyboard.
 
 // -----------------------------------------------------------------------------
 // 1. Работа с портами
@@ -98,28 +98,6 @@ static void print_uint(unsigned int value, unsigned char color) {
 
     while (n > 0) {
         print_char(digits[--n], color);
-    }
-}
-
-static void print_hex_digit(unsigned int value, unsigned char color) {
-    value &= 0xF;
-    print_char((value < 10) ? ('0' + value) : ('A' + value - 10), color);
-}
-
-static void print_hex32(unsigned int value, unsigned char color) {
-    print_string("0x", color);
-
-    for (int shift = 28; shift >= 0; shift -= 4) {
-        print_hex_digit(value >> shift, color);
-    }
-}
-
-static void print_hex64(unsigned int high, unsigned int low, unsigned char color) {
-    print_hex32(high, color);
-    print_char('_', color);
-
-    for (int shift = 28; shift >= 0; shift -= 4) {
-        print_hex_digit(low >> shift, color);
     }
 }
 
