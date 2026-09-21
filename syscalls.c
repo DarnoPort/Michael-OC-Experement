@@ -119,6 +119,102 @@ int syscall_init(void) {
     return 1;
 }
 
+static int copy_user_string(
+    unsigned int directory,
+    unsigned int address,
+    char* destination,
+    unsigned int destination_size
+) {
+    if (!destination || destination_size < 2U) {
+        return 0;
+    }
+
+    for (unsigned int i = 0;
+         i < destination_size - 1U;
+         i++) {
+        unsigned char character;
+
+        if (address > 0xFFFFFFFFU - i ||
+            !paging_read_user_memory(
+                directory,
+                address + i,
+                &character,
+                1
+            )) {
+            return 0;
+        }
+
+        destination[i] = (char)character;
+
+        if (character == '\0') {
+            return 1;
+        }
+    }
+
+    destination[destination_size - 1U] = '\0';
+    return 0;
+}
+
+static int copy_user_argv(
+    unsigned int directory,
+    unsigned int argv_address,
+    unsigned int argc,
+    char storage[PROCESS_ARG_MAX][PROCESS_ARG_MAX_LEN],
+    const char* argv_kernel[PROCESS_ARG_MAX]
+) {
+    if (argc == 0U ||
+        argc > PROCESS_ARG_MAX ||
+        !storage ||
+        !argv_kernel) {
+        return 0;
+    }
+
+    for (unsigned int i = 0;
+         i < argc;
+         i++) {
+        unsigned int string_address = 0;
+
+        if (argv_address > 0xFFFFFFFFU - i * sizeof(unsigned int) ||
+            !paging_read_user_memory(
+                directory,
+                argv_address +
+                    i * sizeof(unsigned int),
+                &string_address,
+                sizeof(unsigned int)
+            ) ||
+            string_address == 0U ||
+            !copy_user_string(
+                directory,
+                string_address,
+                storage[i],
+                PROCESS_ARG_MAX_LEN
+            )) {
+            return 0;
+        }
+
+        argv_kernel[i] = storage[i];
+    }
+
+    {
+        unsigned int null_pointer = 0;
+
+        if (argv_address > 0xFFFFFFFFU -
+                argc * sizeof(unsigned int) ||
+            !paging_read_user_memory(
+                directory,
+                argv_address +
+                    argc * sizeof(unsigned int),
+                &null_pointer,
+                sizeof(unsigned int)
+            ) ||
+            null_pointer != 0U) {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
 static int syscall_load_vfs_image(
     const char* path,
     unsigned char** image,
@@ -452,14 +548,27 @@ int syscall_dispatch(void* registers_ptr) {
 
     if (registers->eax == SYS_EXEC) {
         char path[VFS_PATH_MAX];
+        char argv_storage[PROCESS_ARG_MAX][PROCESS_ARG_MAX_LEN];
+        const char* argv_kernel[PROCESS_ARG_MAX];
         unsigned char* image;
         unsigned int image_size;
+        unsigned int directory =
+            scheduler_current_cr3();
+        unsigned int argc =
+            registers->edx;
 
         if (!copy_user_path(
-                scheduler_current_cr3(),
+                directory,
                 registers->ebx,
                 path,
                 sizeof(path)
+            ) ||
+            !copy_user_argv(
+                directory,
+                registers->ecx,
+                argc,
+                argv_storage,
+                argv_kernel
             )) {
             registers->eax = 0xFFFFFFFFU;
             return 0;
@@ -474,10 +583,12 @@ int syscall_dispatch(void* registers_ptr) {
             return 0;
         }
 
-        if (!process_exec_image(
+        if (!process_exec_image_with_args(
                 path,
                 image,
-                image_size
+                image_size,
+                argc,
+                argv_kernel
             )) {
             free(image);
             registers->eax = 0xFFFFFFFFU;
