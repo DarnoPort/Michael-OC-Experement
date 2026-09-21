@@ -40,23 +40,42 @@ static void terminal_install_cyrillic_font(void) {
         (volatile unsigned char*)0xA0000;
 
     /*
-     * VGA text mode stores 256 glyphs with
-     * 32 bytes reserved for each glyph.
-     * We preserve the current font and replace
-     * only the CP866 Cyrillic glyph slots.
+     * Enter VGA font-access mode.
+     *
+     * The sequence below matches the font access/release
+     * path used by SeaBIOS/Linux:
+     *   - reset the sequencer,
+     *   - expose plane 2 at A0000,
+     *   - disable odd/even addressing,
+     *   - access the 256 glyphs,
+     *   - restore normal text-mode mapping.
      */
+    outb(0x3C4, 0x00);
+    outb(0x3C5, 0x01);
+
+    outb(0x3C4, 0x02);
+    outb(0x3C5, 0x04);
+
+    outb(0x3C4, 0x04);
+    outb(0x3C5, 0x07);
+
+    outb(0x3C4, 0x00);
+    outb(0x3C5, 0x03);
+
+    outb(0x3CE, 0x04);
+    outb(0x3CF, 0x02);
+
     outb(0x3CE, 0x05);
     outb(0x3CF, 0x00);
 
     outb(0x3CE, 0x06);
     outb(0x3CF, 0x04);
 
-    outb(0x3C4, 0x02);
-    outb(0x3C5, 0x04);
-
-    outb(0x3C4, 0x04);
-    outb(0x3C5, 0x06);
-
+    /*
+     * VGA reserves 32 bytes per glyph.
+     * We use the first 16 scanlines and clear the
+     * remaining 16 bytes of the modified glyphs.
+     */
     for (unsigned int i = 0;
          i < sizeof(vga_font_buffer);
          i++) {
@@ -91,12 +110,26 @@ static void terminal_install_cyrillic_font(void) {
             vga_font_buffer[i];
     }
 
-    /* Restore normal VGA text-mode addressing. */
+    /*
+     * Release font access and restore ordinary VGA text
+     * addressing. The 0x03 Memory Mode value here is
+     * deliberate: it is the release sequence used by
+     * SeaBIOS/Linux after font access.
+     */
+    outb(0x3C4, 0x00);
+    outb(0x3C5, 0x01);
+
     outb(0x3C4, 0x02);
     outb(0x3C5, 0x03);
 
     outb(0x3C4, 0x04);
-    outb(0x3C5, 0x07);
+    outb(0x3C5, 0x03);
+
+    outb(0x3C4, 0x00);
+    outb(0x3C5, 0x03);
+
+    outb(0x3CE, 0x04);
+    outb(0x3CF, 0x00);
 
     outb(0x3CE, 0x05);
     outb(0x3CF, 0x10);
@@ -104,7 +137,6 @@ static void terminal_install_cyrillic_font(void) {
     outb(0x3CE, 0x06);
     outb(0x3CF, 0x0E);
 }
-
 
 static inline void outb(
     unsigned short port,
