@@ -703,6 +703,76 @@ int diskfs_rename_node(
     );
 }
 
+
+int diskfs_move_node(
+    unsigned int inode_number,
+    unsigned int new_parent,
+    const char* new_name
+) {
+    struct diskfs_inode inode;
+    struct diskfs_inode candidate;
+    
+    if (!diskfs_ready ||
+        inode_number == 0 ||
+        inode_number >= DISKFS_MAX_INODES ||
+        new_parent >= DISKFS_MAX_INODES ||
+        inode_number == new_parent ||
+        !validate_node_name(new_name) ||
+        !read_inode(
+            inode_number,
+            &inode
+        ) ||
+        !inode.used ||
+        !read_inode(
+            new_parent,
+            &candidate
+        ) ||
+        !candidate.used ||
+        candidate.type != DISKFS_NODE_DIR) {
+        return 0;
+    }
+
+    for (unsigned int i = 1;
+         i < DISKFS_MAX_INODES;
+         i++) {
+        if (i == inode_number) {
+            continue;
+        }
+
+        if (!read_inode(i, &candidate)) {
+            return 0;
+        }
+
+        if (candidate.used &&
+            candidate.parent == new_parent &&
+            diskfs_name_equal(
+                &candidate,
+                new_name
+            )) {
+            return 0;
+        }
+    }
+
+    inode.parent = new_parent;
+
+    zero_memory(
+        inode.name,
+        sizeof(inode.name)
+    );
+
+    for (unsigned int i = 0;
+         i < DISKFS_NAME_MAX - 1U &&
+         new_name[i] != '\0';
+         i++) {
+        inode.name[i] = new_name[i];
+    }
+
+    return write_inode(
+        inode_number,
+        &inode
+    );
+}
+
 int diskfs_remove_node(
     unsigned int inode_number
 ) {
