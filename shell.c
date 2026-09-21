@@ -1822,6 +1822,16 @@ int shell_handle_command(
 
     if (command_args(
             command,
+            "help",
+            &args
+        ) &&
+        *skip_spaces(args) != '\0') {
+        command_help(args);
+        return 1;
+    }
+
+    if (command_args(
+            command,
             "pwd",
             &args
         ) &&
@@ -2021,7 +2031,19 @@ int shell_handle_command(
             "dir",
             &args
         )) {
-        command_ls(args);
+        const char* dir_args = skip_spaces(args);
+
+        if (dir_args &&
+            dir_args[0] == '/' &&
+            shell_lower_char(dir_args[1]) == 'w' &&
+            (dir_args[2] == '\0' ||
+             dir_args[2] == ' ' ||
+             dir_args[2] == '\t')) {
+            command_dir_wide(dir_args);
+        } else {
+            command_ls(args);
+        }
+
         return 1;
     }
 
