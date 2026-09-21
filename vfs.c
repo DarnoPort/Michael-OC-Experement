@@ -743,9 +743,13 @@ int vfs_read(
         !file->node ||
         file->node->type != VFS_NODE_FILE ||
         !(file->flags & VFS_O_READ) ||
-        !buffer ||
-        length == 0) {
+        !buffer) {
         return -1;
+    }
+
+    if (length == 0) {
+        return 0;
+    }
     }
 
     flags = irq_save_vfs();
@@ -790,9 +794,13 @@ int vfs_write(
         !file->node ||
         file->node->type != VFS_NODE_FILE ||
         !(file->flags & VFS_O_WRITE) ||
-        !buffer ||
-        length == 0) {
+        !buffer) {
         return -1;
+    }
+
+    if (length == 0) {
+        return 0;
+    }
     }
 
     if (file->offset >
