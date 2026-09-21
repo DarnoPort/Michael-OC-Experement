@@ -377,6 +377,43 @@ int syscall_dispatch(void* registers_ptr) {
     return 0;
 }
 
+
+static int verify_worker_file(
+    const char* path,
+    char expected_pid
+) {
+    unsigned char buffer[2];
+    struct vfs_file* file;
+    int result;
+    int ok = 1;
+
+    file =
+        vfs_open(
+            path,
+            VFS_O_READ
+        );
+
+    if (!file) {
+        return 0;
+    }
+
+    result =
+        vfs_read(
+            file,
+            buffer,
+            sizeof(buffer)
+        );
+
+    if (result != 2 ||
+        buffer[0] != (unsigned char)expected_pid ||
+        buffer[1] != 10) {
+        ok = 0;
+    }
+
+    vfs_close(file);
+    return ok;
+}
+
 void syscall_run_test(void) {
     int pid_a;
     int pid_b;
@@ -424,4 +461,24 @@ void syscall_run_test(void) {
     print_string("All user processes have returned to the kernel.\n", 0x0E);
 
     scheduler_cleanup();
+
+    if (pid_b >= 0 &&
+        verify_worker_file(
+            "/worker1.txt",
+            '1'
+        ) &&
+        verify_worker_file(
+            "/worker2.txt",
+            '2'
+        )) {
+        print_string(
+            "usertest: user RAMFS syscalls PASS. Files remain in RAMFS.\n",
+            0x0A
+        );
+    } else {
+        print_string(
+            "usertest: user RAMFS syscall verification FAILED.\n",
+            0x0C
+        );
+    }
 }
