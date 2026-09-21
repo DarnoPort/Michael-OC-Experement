@@ -10,6 +10,7 @@ static unsigned int prompt_row = 0;
 static unsigned int prompt_col = 0;
 
 static char command_buffer[TERMINAL_INPUT_MAX];
+static char prompt_text[TERMINAL_PROMPT_MAX];
 static unsigned int command_length = 0;
 static unsigned int cursor_index = 0;
 static int command_ready = 0;
@@ -531,8 +532,27 @@ static void backspace_character(void) {
     redraw_input();
 }
 
+void terminal_set_prompt(const char* prompt) {
+    unsigned int i = 0;
+
+    if (!prompt || *prompt == '\0') {
+        prompt_text[0] = '>';
+        prompt_text[1] = ' ';
+        prompt_text[2] = '\0';
+        return;
+    }
+
+    while (i + 1U < TERMINAL_PROMPT_MAX &&
+           prompt[i] != '\0') {
+        prompt_text[i] = prompt[i];
+        i++;
+    }
+
+    prompt_text[i] = '\0';
+}
+
 void terminal_prompt(void) {
-    print_string("> ", 0x0B);
+    print_string(prompt_text, 0x0B);
 
     prompt_row = term_row;
     prompt_col = term_col;
@@ -1036,6 +1056,9 @@ void terminal_init(void) {
     language_layout = 0;
     layout_switch_latch = 0;
     command_buffer[0] = 0;
+    prompt_text[0] = '>';
+    prompt_text[1] = ' ';
+    prompt_text[2] = 0;
 
     terminal_install_cyrillic_font();
     terminal_clear();
