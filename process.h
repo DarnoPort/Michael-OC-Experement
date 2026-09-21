@@ -60,6 +60,13 @@ int process_run_image_with_args(
     unsigned int argc,
     const char* const* argv
 );
+int process_exec_image_with_args(
+    const char* name,
+    const unsigned char* image,
+    unsigned int image_size,
+    unsigned int argc,
+    const char* const* argv
+);
 int process_exec_image(
     const char* name,
     const unsigned char* image,
