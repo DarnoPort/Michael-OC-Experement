@@ -98,6 +98,7 @@ static int segment_overlaps_loaded_area(
 static int load_segment(
     struct process* process,
     const struct elf32_program_header* ph,
+    const unsigned char* image,
     unsigned int image_size
 ) {
     unsigned int segment_start;
@@ -171,7 +172,7 @@ static int load_segment(
 
     if (ph->p_filesz > 0) {
         const unsigned char* source =
-            &user_image_start + ph->p_offset;
+            image + ph->p_offset;
 
         if (!paging_write_user_memory(
                 process->cr3,
@@ -327,6 +328,7 @@ int elf_load_user_process_from_image(
         if (!load_segment(
                 process,
                 ph,
+                image,
                 image_size
             )) {
             return 0;
