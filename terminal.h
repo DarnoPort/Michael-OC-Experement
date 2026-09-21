@@ -11,6 +11,9 @@ void terminal_clear(void);
 
 void print_char(char c, unsigned char color);
 void print_string(const char* str, unsigned char color);
+void print_uint(unsigned int value, unsigned char color);
+void print_hex32(unsigned int value, unsigned char color);
+void print_hex64(unsigned int high, unsigned int low, unsigned char color);
 
 void terminal_prompt(void);
 void terminal_keyboard_scancode(unsigned char scancode);
