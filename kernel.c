@@ -329,13 +329,34 @@ void show_meminfo(void) {
 // 8. Shell helpers
 // -----------------------------------------------------------------------------
 
+static char command_lower_char(char value) {
+    if (value >= 'A' && value <= 'Z') {
+        return (char)(value - 'A' + 'a');
+    }
+
+    return value;
+}
+
 int strcmp(const char* s1, const char* s2) {
-    while (*s1 && (*s1 == *s2)) {
+    while (*s1 &&
+           command_lower_char(*s1) ==
+           command_lower_char(*s2)) {
         s1++;
         s2++;
     }
 
-    return *(unsigned const char*)s1 - *(unsigned const char*)s2;
+    return
+        (unsigned char)command_lower_char(*s1) -
+        (unsigned char)command_lower_char(*s2);
+}
+
+static void print_help(void) {
+    print_string("Michael OS command shell\n", 0x0A);
+    print_string("----------------------\n", 0x08);
+    print_string("Files: dir, cd, mkdir, touch, copy-ready tools, write, type, open, read, close, del/rm\n", 0x0E);
+    print_string("System: ver, echo, history, clear, uptime, ticks, meminfo, physinfo, memtest, paging, vmtest, pfault, ps, usertest\n", 0x0E);
+    print_string("Programs: install-demo, install-exec-test, install-args-test, run <path> [args...]\n", 0x0E);
+    print_string("Shortcuts: cls=clear, type=cat, dir=ls, Ctrl+C, Ctrl+L, Ctrl+U, Ctrl+A, Ctrl+E\n", 0x07);
 }
 
 void clear_screen(void) {
@@ -432,10 +453,8 @@ void kernel_main(unsigned int magic, unsigned int info_addr) {
                 terminal_get_command();
 
             if (strcmp(command, "help") == 0) {
-                print_string(
-                    "Commands: help, ver, history, clear, cls, uptime, ticks, meminfo, physinfo, memtest, paging, vmtest, pfault, ps, usertest, diskinfo, pwd, ls, dir, cd, mkdir, touch, write, cat, type, open, read, close, rm, fstest, install-demo, install-exec-test, install-args-test, run\n",
-                    0x0E
-                );
+                print_help();
+
             } else if (strcmp(command, "uptime") == 0) {
                 print_uptime();
             } else if (strcmp(command, "ticks") == 0) {
