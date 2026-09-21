@@ -1538,6 +1538,8 @@ int shell_init(void) {
     shell_cwd[0] = '/';
     shell_cwd[1] = '\0';
 
+    shell_update_prompt();
+
     return 1;
 }
 
