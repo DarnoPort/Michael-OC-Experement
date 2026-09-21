@@ -69,6 +69,12 @@ int paging_unmap_user_page_in_directory(
     unsigned int virtual_address
 );
 
+int paging_set_user_page_flags_in_directory(
+    unsigned int directory,
+    unsigned int virtual_address,
+    unsigned int flags
+);
+
 int paging_allocate_user_pages(
     unsigned int directory,
     unsigned int virtual_address,
