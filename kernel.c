@@ -355,7 +355,7 @@ static void print_help(void) {
     print_string("----------------------\n", 0x08);
     print_string("Files: dir/ls, cd, mkdir, touch, write, type/cat\n", 0x0E);
     print_string("       DIR /W shows a compact two-column directory view.\n", 0x0E);
-    print_string("       open, read, close, del/rm\n", 0x0E);
+    print_string("       open, read, close, copy, del/rm\n", 0x0E);
     print_string("System: ver, echo, history, clear, uptime, ticks\n", 0x0E);
     print_string("        meminfo, physinfo, memtest, paging, vmtest, pfault, ps, usertest\n", 0x0E);
     print_string("Programs: install-demo, install-exec-test, install-args-test\n", 0x0E);
@@ -409,7 +409,7 @@ void kernel_main(unsigned int magic, unsigned int info_addr) {
     init_pic();
     init_pit(100);
 
-    print_string("=== Michael OS " MICHAEL_OS_VERSION_STRING ": Directory Interface ===\n", 0x0A);
+    print_string("=== Michael OS " MICHAEL_OS_VERSION_STRING ": File Copy ===\n", 0x0A);
 
     if (!memory_init(magic, info_addr)) {
         print_string("WARNING: physical memory manager initialization failed.\n", 0x0C);
