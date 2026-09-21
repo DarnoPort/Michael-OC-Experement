@@ -819,6 +819,14 @@ void terminal_keyboard_scancode(
     if (scancode == 0x38U) {
         alt_down = !released;
 
+        if (!released &&
+            shift_down &&
+            !layout_switch_latch) {
+            language_layout =
+                !language_layout;
+            layout_switch_latch = 1;
+        }
+
         if (released &&
             !shift_down) {
             layout_switch_latch = 0;
