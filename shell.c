@@ -779,7 +779,7 @@ static int command_diskinfo(void) {
 
 static int command_fstest(void) {
     static const char message[] =
-        "Hello Michael OS Phase 17!";
+        "Hello Michael OS Phase 18!";
     unsigned char buffer[
         sizeof(message)
     ];
