@@ -1,6 +1,5 @@
 ; NanoOS Multiboot entry point.
-; GRUB enters the kernel in 32-bit protected mode, but we install
-; our own flat GDT instead of relying on GRUB's temporary GDT.
+; Phase 10 adds user-mode segments and a TSS descriptor.
 
 MBALIGN  equ  1 << 0
 MEMINFO  equ  1 << 1
@@ -16,19 +15,24 @@ align 4
 
 section .bss
 align 16
+global stack_bottom
+global stack_top
 stack_bottom:
     resb 16384
 stack_top:
 
 section .text
 global _start
+global set_tss_descriptor
+global load_tss
+global enter_user_mode
+global user_exit_stub
+
 extern kernel_main
+extern user_return_esp
 
 _start:
     cli
-
-    ; Save the Multiboot values in registers while we replace the stack.
-    ; EAX = Multiboot magic, EBX = pointer to multiboot_info.
     mov esi, eax
     mov edi, ebx
 
@@ -46,7 +50,6 @@ _start:
     mov esp, stack_top
     xor ebp, ebp
 
-    ; cdecl: kernel_main(multiboot_magic, multiboot_info_addr)
     push edi
     push esi
     call kernel_main
@@ -57,11 +60,66 @@ _start:
     hlt
     jmp .hang
 
+; [esp+4] = TSS base, [esp+8] = TSS limit.
+set_tss_descriptor:
+    mov eax, [esp + 4]
+    mov edx, [esp + 8]
+
+    mov word [gdt_tss + 0], dx
+    mov word [gdt_tss + 2], ax
+
+    shr eax, 16
+    mov byte [gdt_tss + 4], al
+    mov byte [gdt_tss + 5], 0x89
+    mov byte [gdt_tss + 6], 0x00
+    mov byte [gdt_tss + 7], ah
+    ret
+
+load_tss:
+    mov ax, 0x28
+    ltr ax
+    ret
+
+; [esp+4] = user EIP, [esp+8] = user ESP.
+enter_user_mode:
+    mov [user_return_esp], esp
+
+    mov ecx, [esp + 4]
+    mov edx, [esp + 8]
+
+    mov ax, 0x23
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+
+    push dword 0x23
+    push edx
+    pushfd
+    push dword 0x1B
+    push ecx
+    iretd
+
+user_exit_stub:
+    mov ax, 0x10
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+
+    mov esp, [user_return_esp]
+    ret
+
+section .data
 align 8
 gdt_start:
     dq 0x0000000000000000
-    dq 0x00CF9A000000FFFF
-    dq 0x00CF92000000FFFF
+    dq 0x00CF9A000000FFFF       ; 0x08 kernel code
+    dq 0x00CF92000000FFFF       ; 0x10 kernel data
+    dq 0x00CFFA000000FFFF       ; 0x18 user code, DPL3
+    dq 0x00CFF2000000FFFF       ; 0x20 user data, DPL3
+gdt_tss:
+    dq 0x0000000000000000       ; 0x28 TSS, filled at runtime
 gdt_end:
 
 gdt_descriptor:
