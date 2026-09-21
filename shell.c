@@ -1006,6 +1006,75 @@ static int command_rename(
     return 1;
 }
 
+
+static int command_move(
+    const char* args
+) {
+    const char* cursor = skip_spaces(args);
+    char old_token[VFS_PATH_MAX];
+    char new_token[VFS_PATH_MAX];
+    char old_path[VFS_PATH_MAX];
+    char new_path[VFS_PATH_MAX];
+
+    if (!next_token(
+            &cursor,
+            old_token,
+            sizeof(old_token)
+        ) ||
+        !next_token(
+            &cursor,
+            new_token,
+            sizeof(new_token)
+        ) ||
+        *skip_spaces(cursor) != '\0' ||
+        !make_path(
+            old_token,
+            old_path
+        ) ||
+        !make_path(
+            new_token,
+            new_path
+        )) {
+        print_error(
+            "move: ",
+            "usage: move <source> <destination>"
+        );
+        return 1;
+    }
+
+    if (!vfs_move(
+            old_path,
+            new_path
+        )) {
+        print_error(
+            "move: ",
+            "move failed; destination must be a new path in another or the same directory."
+        );
+        return 1;
+    }
+
+    print_string(
+        "Moved ",
+        0x0A
+    );
+    print_string(
+        old_token,
+        0x0F
+    );
+    print_string(
+        " -> ",
+        0x07
+    );
+    print_string(
+        new_token,
+        0x0F
+    );
+    print_char('\n', 0x07);
+
+    return 1;
+}
+
+
 static void command_open(const char* args) {
     char path[VFS_PATH_MAX];
     struct vfs_file* file;
@@ -1620,6 +1689,8 @@ static void command_help(
     } else if (shell_command_name_is(topic, "ren") ||
                shell_command_name_is(topic, "rename")) {
         print_string("REN/RENAME <old> <new> - renames a file or directory in the same directory.\n", 0x0F);
+    } else if (shell_command_name_is(topic, "move")) {
+        print_string("MOVE <source> <destination> - moves a file or directory to another directory.\n", 0x0F);
     } else if (shell_command_name_is(topic, "echo")) {
         print_string("ECHO <text> - prints text to the terminal.\n", 0x0F);
     } else if (shell_command_name_is(topic, "pwd")) {
@@ -2218,6 +2289,15 @@ int shell_handle_command(
             &args
         )) {
         command_rename(args);
+        return 1;
+    }
+
+    if (command_args(
+            command,
+            "move",
+            &args
+        )) {
+        command_move(args);
         return 1;
     }
 
