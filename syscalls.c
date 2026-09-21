@@ -1,6 +1,7 @@
 #include "syscalls.h"
 #include "memory.h"
 #include "paging.h"
+#include "process.h"
 
 extern void print_char(char c, unsigned char color);
 extern void print_string(const char* str, unsigned char color);
@@ -10,9 +11,6 @@ extern void load_tss(void);
 extern void enter_user_mode(unsigned int eip, unsigned int esp);
 
 extern char stack_top;
-extern char user_program_start;
-extern char user_program_end;
-
 volatile unsigned int user_return_esp = 0;
 
 struct tss32 {
@@ -57,20 +55,8 @@ struct syscall_registers {
 };
 
 static struct tss32 tss;
-static unsigned int user_code_physical = VM_ALLOC_FAIL;
-static unsigned int user_stack_physical = VM_ALLOC_FAIL;
-
-static void copy_user_program(unsigned int physical) {
-    volatile unsigned char* destination =
-        (volatile unsigned char*)physical;
-    const unsigned char* source =
-        (const unsigned char*)&user_program_start;
-    const unsigned char* end =
-        (const unsigned char*)&user_program_end;
-
-    while (source < end) {
-        *destination++ = *source++;
-    }
+void syscall_set_kernel_stack(unsigned int stack_top) {
+    tss.esp0 = stack_top;
 }
 
 int syscall_init(void) {
@@ -88,51 +74,7 @@ int syscall_init(void) {
     );
     load_tss();
 
-    user_code_physical = phys_alloc_page();
-    user_stack_physical = phys_alloc_page();
-
-    if (user_code_physical == VM_ALLOC_FAIL ||
-        user_stack_physical == VM_ALLOC_FAIL) {
-        if (user_code_physical != VM_ALLOC_FAIL) {
-            phys_free_page(user_code_physical);
-        }
-
-        if (user_stack_physical != VM_ALLOC_FAIL) {
-            phys_free_page(user_stack_physical);
-        }
-
-        user_code_physical = VM_ALLOC_FAIL;
-        user_stack_physical = VM_ALLOC_FAIL;
-        return 0;
-    }
-
-    copy_user_program(user_code_physical);
-
-    if (!paging_map_user_page(
-            USER_CODE_BASE,
-            user_code_physical,
-            PAGE_PRESENT
-        )) {
-        phys_free_page(user_code_physical);
-        phys_free_page(user_stack_physical);
-        user_code_physical = VM_ALLOC_FAIL;
-        user_stack_physical = VM_ALLOC_FAIL;
-        return 0;
-    }
-
-    if (!paging_map_user_page(
-            USER_STACK_BASE,
-            user_stack_physical,
-            PAGE_PRESENT | PAGE_WRITABLE
-        )) {
-        paging_unmap_user_page(USER_CODE_BASE);
-        phys_free_page(user_code_physical);
-        phys_free_page(user_stack_physical);
-        user_code_physical = VM_ALLOC_FAIL;
-        user_stack_physical = VM_ALLOC_FAIL;
-        return 0;
-    }
-
+    scheduler_init();
     return 1;
 }
 
@@ -158,10 +100,24 @@ int syscall_dispatch(void* registers_ptr) {
         return 0;
     }
 
-    if (registers->eax == SYS_EXIT) {
-        print_string("\n[syscall] user program exited.\n", 0x0E);
+    if (registers->eax == SYS_GETPID) {
+        int pid = scheduler_current_pid();
+
+        registers->eax =
+            (pid < 0) ? 0xFFFFFFFFU : (unsigned int)pid;
+        return 0;
+    }
+
+    if (registers->eax == SYS_YIELD) {
         registers->eax = 0;
-        return 1;
+        return 2;
+    }
+
+    if (registers->eax == SYS_EXIT) {
+        print_string("\n[syscall] user process exited.\n", 0x0E);
+        process_exit_current();
+        registers->eax = 0;
+        return 2;
     }
 
     registers->eax = 0xFFFFFFFFU;
@@ -169,18 +125,46 @@ int syscall_dispatch(void* registers_ptr) {
 }
 
 void syscall_run_test(void) {
-    if (user_code_physical == VM_ALLOC_FAIL ||
-        user_stack_physical == VM_ALLOC_FAIL) {
+    int pid_a;
+    int pid_b;
+
+    pid_a = process_create("worker-A");
+    pid_b = process_create("worker-B");
+
+    if (pid_a < 0) {
         print_string(
-            "usertest: user environment is not initialized.\n",
+            "usertest: failed to create first process.\n",
             0x0C
         );
+        scheduler_cleanup();
         return;
     }
 
+    if (pid_b < 0) {
+        print_string(
+            "usertest: second process could not be created; running one process.\n",
+            0x0C
+        );
+    }
+
+    if (!scheduler_prepare_first()) {
+        print_string(
+            "usertest: scheduler initialization failed.\n",
+            0x0C
+        );
+        scheduler_cleanup();
+        return;
+    }
+
+    print_string("Process table:\n", 0x0A);
+    scheduler_print_processes();
+
+    print_string("Starting preemptive scheduler...\n", 0x0E);
     print_string("Entering Ring 3...\n", 0x0E);
 
     enter_user_mode(USER_CODE_BASE, USER_STACK_TOP);
 
-    print_string("Returned to kernel from Ring 3.\n", 0x0E);
+    print_string("All user processes have returned to the kernel.\n", 0x0E);
+
+    scheduler_cleanup();
 }
