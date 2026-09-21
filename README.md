@@ -2,7 +2,11 @@
 
 Учебная 32-битная x86 ОС.
 
-## Текущий этап — Phase 11
+## Текущий этап — Phase 12
+
+На этом этапе NanoOS переходит от нескольких user-mode задач в одном общем адресном пространстве к отдельным address spaces.
+
+Основные возможности:
 
 - GRUB Multiboot
 - собственная flat GDT
@@ -16,107 +20,175 @@
 - kernel heap с malloc/free
 - 32-битный paging без PAE
 - kernel virtual-memory область 0xC0000000–0xC3FFFFFF
-- virtual page allocator
 - Page Fault с расшифровкой адреса и error code
 - null page protection
 - CR0.WP
-- user VM область 0x80000000–0x803FFFFF
-- user code и user stack с отдельными правами страниц
-- GDT-сегменты Ring 3
-- 32-битный TSS с отдельным kernel stack при входе из Ring 3
+- Ring 3
+- TSS с отдельным kernel stack при входе из Ring 3
 - DPL3 system call gate на interrupt 0x80
-- SYS_WRITE и SYS_EXIT
-- проверка user pointers перед SYS_WRITE
-- возврат из демонстрационной user-программы обратно в kernel shell
-- PCB и PID для пользовательских процессов
-- preemptive round-robin scheduler на IRQ0 (100 Hz)
-- отдельный kernel stack на каждый процесс
-- отдельные физические code/stack страницы на каждый процесс
-- переключение текущего user address mapping при context switch
-- SYS_GETPID и SYS_YIELD
+- scheduler и preemptive round-robin на IRQ0
+- PID и PCB для процессов
+- отдельный page directory (CR3) для каждого процесса
+- отдельная user page table для каждого процесса
+- общий kernel address space, присутствующий во всех процессах
+- отдельный kernel stack для каждого процесса
+- ELF32 loader из встроенного user ELF image
+- PT_LOAD загрузка, BSS zero-fill и проверка границ
+- page permissions из ELF PF_* после загрузки
+- SYS_WRITE
+- SYS_GETPID
+- SYS_YIELD
+- SYS_SBRK
+- SYS_EXIT
+- user heap в диапазоне 0x80100000–0x803EFFFF
 - shell: help, clear, uptime, ticks, meminfo, physinfo, memtest, paging, vmtest, pfault, ps, usertest
 
-## Архитектура Phase 11
+## Архитектура
 
-NanoOS теперь имеет реальную границу привилегий:
-
-```
-Ring 3
-  |
-  | int 0x80
-  v
-TSS.esp0
-  |
-  v
-Ring 0
-  |
-  +-- syscall dispatcher
-  +-- kernel heap
-  +-- physical memory
-  +-- virtual memory
-```
-
-Пользовательский тестовый код запускается в отдельной user VM-области:
+Каждый пользовательский процесс имеет собственный CR3:
 
 ```
-0x80000000  user code
-0x80001000  user stack
-0x80002000  end of test stack
+Process A
+  CR3 A
+   ├── kernel mappings
+   └── user page table A
+          ├── ELF code/data
+          ├── heap
+          └── stack
+
+Process B
+  CR3 B
+   ├── kernel mappings
+   └── user page table B
+          ├── ELF code/data
+          ├── heap
+          └── stack
 ```
 
-Kernel address space остаётся недоступным из Ring 3, потому что соответствующие PDE/PTE не имеют PAGE_USER.
+Kernel VM остаётся общим:
 
-SYS_WRITE принимает:
-- EAX = 1
-- EBX = user buffer
-- ECX = length
-
-Ядро проверяет весь диапазон пользовательской памяти перед чтением.
-
-SYS_EXIT завершает демонстрационный процесс и возвращает управление исходному kernel stack, после чего usertest продолжает выполнение в Ring 0.
-
-## Команды Phase 10
-
-```text
-usertest
-paging
-vmtest
-pfault
-memtest
+```
+0xC0000000 - 0xC3FFFFFF
 ```
 
-Ожидаемый результат usertest:
+User VM:
 
-```text
+```
+0x80000000 - 0x803FFFFF
+```
+
+В одном 4 MiB user VM используется одна page table. Это специально сохраняет реализацию достаточно простой для учебной ОС, но уже даёт настоящую изоляцию адресного пространства между процессами.
+
+## ELF loader
+
+Пользовательская программа сначала собирается как отдельный ELF32:
+
+```
+user_program.asm
+      ↓ NASM
+user_program_raw.o
+      ↓ ld + user.ld
+user_program.elf
+      ↓ incbin
+kernel image
+```
+
+При создании процесса loader:
+
+1. проверяет ELF magic/class/endianness/type/machine;
+2. проверяет таблицу program headers и границы файла;
+3. находит PT_LOAD сегменты;
+4. проверяет границы user VM;
+5. выделяет физические страницы;
+6. копирует p_filesz;
+7. зануляет p_memsz - p_filesz;
+8. выставляет конечные права страниц по PF_*;
+9. возвращает entry point процесса.
+
+Сейчас для надёжности загрузчик не допускает перекрывающиеся PT_LOAD страницы.
+
+## User heap
+
+В процессе имеется простой program break:
+
+```
+USER_HEAP_BASE = 0x80100000
+USER_HEAP_END  = 0x803F0000
+```
+
+`SYS_SBRK` принимает увеличение break в EBX и возвращает старое значение break в EAX.
+
+Пока поддерживается только рост heap. Это намеренно минимальный аналог традиционного `sbrk`, достаточный как фундамент для будущего malloc в user space.
+
+## Демонстрация
+
+Команда:
+
+```
 > usertest
-Entering Ring 3...
-Hello from Ring 3! System call works.
-[syscall] user program exited.
-Returned to kernel from Ring 3.
+```
+
+создаёт два процесса.
+
+Каждый получает:
+
+- собственный PID;
+- собственный CR3;
+- собственный kernel stack;
+- собственные физические user pages;
+- собственный heap.
+
+Тестовая user-программа:
+
+- получает PID через `SYS_GETPID`;
+- резервирует страницу через `SYS_SBRK`;
+- записывает PID в свой heap;
+- вызывает `SYS_WRITE`;
+- создаёт CPU-нагрузку;
+- вызывает `SYS_YIELD`;
+- завершается через `SYS_EXIT`.
+
+Ожидаемый смысл вывода — повторяющиеся PID двух процессов, например:
+
+```
+1
+2
+1
+2
+...
+[syscall] user process exited.
+[syscall] user process exited.
+All user processes have returned to the kernel.
 >
 ```
 
+Точный порядок зависит от работы timer scheduler.
+
+Команда:
+
+```
+> ps
+```
+
+показывает PID, состояние и CR3 процессов.
+
 ## Что пока намеренно не реализовано
 
-Phase 11 уже содержит процессы и вытесняющее переключение контекста, но address space пока общий для всех процессов.
+У NanoOS всё ещё нет:
 
-При каждом переключении scheduler меняет физические страницы, отображённые в:
-- 0x80000000 — user code
-- 0x80001000 — user stack
-
-Поэтому неактивный процесс хранит свои физические страницы отдельно, а активный получает их через фиксированное user virtual address space.
-
-Пока ещё нет:
-- отдельного page directory для каждого процесса;
-- ELF loader;
 - файловой системы;
+- дискового драйвера;
+- ELF-программ, загружаемых с диска;
 - fork/exec;
 - IPC;
-- sleeping/blocked process states;
-- настоящего user heap;
-- полноценного процесса shell.
+- blocked/sleeping states;
+- полноценного user malloc/free;
+- динамического линкера;
+- shared libraries;
+- настоящего terminal device;
+- графической подсистемы.
 
-Следующая логичная стадия — отдельные address spaces, динамический loader и блокирующие состояния процессов.
+Следующая логичная крупная стадия — файловая подсистема и блочное хранилище.
 
 ## Сборка в Ubuntu
 
@@ -127,21 +199,10 @@ make iso
 make run
 ```
 
-Сгенерированные `.o`, `.bin` и `.iso` не хранятся в Git.
+Для проверки только kernel image:
 
-## Демонстрация Phase 11
+```bash
+make check
+```
 
-Команда `usertest` создаёт два пользовательских процесса. Каждый процесс получает:
-- PID;
-- собственную физическую страницу кода;
-- собственную физическую страницу стека;
-- собственную страницу kernel stack;
-- сохранённый CPU context для scheduler.
-
-Таймер 100 Hz выполняет round-robin переключение между Ring 3 процессами. Тестовая программа несколько раз печатает свой PID и выполняет намеренную busy-loop нагрузку, чтобы таймер успевал вытеснять её.
-
-Команда `ps` показывает таблицу созданных процессов.
-
-## Ограничение Phase 11
-
-Это ещё не полная изоляция address space уровня современных ОС. User virtual addresses у процессов одинаковые, а page table физически общая. Изоляция достигается тем, что scheduler переключает отображённые физические code/stack страницы. Отдельные page directories для процессов являются отдельной следующей стадией.
+Сгенерированные `.o`, `.elf`, `.bin` и `.iso` не хранятся в Git.
