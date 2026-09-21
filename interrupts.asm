@@ -13,7 +13,14 @@ extern keyboard_handler_c
 extern timer_handler_c
 extern exception_handler_c
 extern syscall_dispatch
-extern user_exit_stub
+extern scheduler_on_timer
+extern scheduler_on_syscall
+extern scheduler_on_exec
+extern user_return_esp
+extern user_return_ebp
+extern user_return_ebx
+extern user_return_esi
+extern user_return_edi
 
 load_idt:
     mov edx, [esp + 4]
@@ -24,14 +31,14 @@ load_idt:
 global isr%1
 isr%1:
     push dword %1
-    jmp isr_common_noerr
+    jmp near isr_common_noerr
 %endmacro
 
 %macro ISR_ERR 1
 global isr%1
 isr%1:
     push dword %1
-    jmp isr_common_err
+    jmp near isr_common_err
 %endmacro
 
 ISR_NOERR 0
@@ -70,10 +77,12 @@ ISR_NOERR 31
 isr_common_noerr:
     pushad
     mov eax, [esp + 32]
+    lea edx, [esp + 36]
+    push edx
     push dword 0
     push eax
     call exception_handler_c
-    add esp, 8
+    add esp, 12
     popad
     add esp, 4
     iretd
@@ -82,10 +91,12 @@ isr_common_err:
     pushad
     mov eax, [esp + 32]
     mov edx, [esp + 36]
+    lea ecx, [esp + 40]
+    push ecx
     push edx
     push eax
     call exception_handler_c
-    add esp, 8
+    add esp, 12
     popad
     add esp, 8
     iretd
@@ -94,7 +105,7 @@ isr_common_err:
 global irq%1
 irq%1:
     push dword %1
-    jmp irq_common
+    jmp near irq_common
 %endmacro
 
 IRQ 32
@@ -118,9 +129,34 @@ timer_handler_asm:
     pushad
     cld
     call timer_handler_c
-    popad
+
+    push esp
+    call scheduler_on_timer
+    add esp, 4
+
+    test eax, eax
+    jz near .timer_no_switch
+
+    mov edx, eax
+
     mov al, 0x20
     out 0x20, al
+
+    mov esp, edx
+    mov ax, 0x23
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+
+    popad
+    iretd
+
+.timer_no_switch:
+    mov al, 0x20
+    out 0x20, al
+
+    popad
     iretd
 
 keyboard_handler_asm:
@@ -133,6 +169,12 @@ keyboard_handler_asm:
     iretd
 
 ; System call interrupt 0x80.
+;
+; syscall_dispatch() returns:
+;   0 = ordinary syscall, return to the same user context
+;   1 = return directly to the kernel shell
+;   2 = run the scheduler and switch/restore a process context
+;   3 = exec() replaced the current user image
 syscall_handler_asm:
     pushad
     cld
@@ -141,27 +183,78 @@ syscall_handler_asm:
     call syscall_dispatch
     add esp, 4
 
+    cmp eax, 2
+    je near .schedule
+
+    cmp eax, 3
+    je near .exec
+
+    cmp eax, 1
+    je near .exit_to_kernel
+
+    popad
+    iretd
+
+.exec:
+    call scheduler_on_exec
+
     test eax, eax
-    jnz .exit_to_kernel
+    jz .exit_to_kernel
+
+    mov edx, eax
+    mov esp, edx
+    mov ax, 0x23
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+
+    popad
+    iretd
+
+.schedule:
+    push esp
+    call scheduler_on_syscall
+    add esp, 4
+
+    test eax, eax
+    jz .exit_to_kernel
+
+    mov edx, eax
+    mov esp, edx
+    mov ax, 0x23
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
 
     popad
     iretd
 
 .exit_to_kernel:
-    popad
+    ; SYS_EXIT arrived through int 0x80, so we are already in Ring 0.
+    ; Restore the kernel caller's stack and callee-saved registers.
+    ; The user program may have changed EBP/EBX/ESI/EDI.
+    mov esp, [user_return_esp]
+    mov ebp, [user_return_ebp]
+    mov ebx, [user_return_ebx]
+    mov esi, [user_return_esi]
+    mov edi, [user_return_edi]
 
-    mov eax, user_exit_stub
-    mov [esp], eax
-    mov dword [esp + 4], 0x08
+    mov ax, 0x10
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
 
-    iretd
+    ret
 
 irq_common:
     pushad
     mov eax, [esp + 32]
 
     cmp eax, 40
-    jb .master_eoi
+    jb near .master_eoi
     mov al, 0x20
     out 0xA0, al
 
