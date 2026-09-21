@@ -165,6 +165,7 @@ keyboard_handler_asm:
 ;   0 = ordinary syscall, return to the same user context
 ;   1 = return directly to the kernel shell
 ;   2 = run the scheduler and switch/restore a process context
+;   3 = exec() replaced the current user image
 syscall_handler_asm:
     pushad
     cld
@@ -176,8 +177,28 @@ syscall_handler_asm:
     cmp eax, 2
     je .schedule
 
+    cmp eax, 3
+    je .exec
+
     cmp eax, 1
     je .exit_to_kernel
+
+    popad
+    iretd
+
+.exec:
+    call scheduler_on_exec
+
+    test eax, eax
+    jz .exit_to_kernel
+
+    mov edx, eax
+    mov esp, edx
+    mov ax, 0x23
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
 
     popad
     iretd
