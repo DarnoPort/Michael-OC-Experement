@@ -8,6 +8,9 @@ extern void print_char(char c, unsigned char color);
 extern void print_string(const char* str, unsigned char color);
 extern void syscall_set_kernel_stack(unsigned int stack_top);
 extern char stack_top;
+extern void enter_user_mode(unsigned int eip, unsigned int esp);
+extern const unsigned char user_image_start;
+extern const unsigned char user_image_end;
 
 #define USER_STACK_BASE (USER_STACK_TOP - PAGE_SIZE)
 
@@ -168,7 +171,11 @@ void scheduler_init(void) {
     scheduler_active = 0;
 }
 
-int process_create(const char* name) {
+int process_create_from_image(
+    const char* name,
+    const unsigned char* image,
+    unsigned int image_size
+) {
     int slot = -1;
     struct process* process;
 
@@ -226,7 +233,11 @@ int process_create(const char* name) {
         return -1;
     }
 
-    if (!elf_load_user_process(process)) {
+    if (!elf_load_user_process_from_image(
+            process,
+            image,
+            image_size
+        )) {
         paging_destroy_address_space(
             process->cr3
         );
@@ -290,6 +301,59 @@ int process_create(const char* name) {
 
     return (int)process->pid;
 }
+int process_create(const char* name) {
+    const unsigned char* image =
+        &user_image_start;
+    unsigned int image_size =
+        (unsigned int)(
+            &user_image_end - &user_image_start
+        );
+
+    return process_create_from_image(
+        name,
+        image,
+        image_size
+    );
+}
+
+int process_run_image(
+    const char* name,
+    const unsigned char* image,
+    unsigned int image_size
+) {
+    int pid;
+
+    if (!image || image_size == 0U) {
+        return -1;
+    }
+
+    scheduler_init();
+
+    pid = process_create_from_image(
+        name,
+        image,
+        image_size
+    );
+
+    if (pid < 0) {
+        scheduler_cleanup();
+        return -1;
+    }
+
+    if (!scheduler_prepare_first()) {
+        scheduler_cleanup();
+        return -1;
+    }
+
+    enter_user_mode(
+        scheduler_current_entry(),
+        scheduler_current_stack_top()
+    );
+
+    scheduler_cleanup();
+    return pid;
+}
+
 
 int scheduler_prepare_first(void) {
     int first;
