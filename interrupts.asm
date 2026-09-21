@@ -17,6 +17,10 @@ extern scheduler_on_timer
 extern scheduler_on_syscall
 extern scheduler_on_exec
 extern user_return_esp
+extern user_return_ebp
+extern user_return_ebx
+extern user_return_esi
+extern user_return_edi
 
 load_idt:
     mov edx, [esp + 4]
@@ -27,14 +31,14 @@ load_idt:
 global isr%1
 isr%1:
     push dword %1
-    jmp isr_common_noerr
+    jmp near isr_common_noerr
 %endmacro
 
 %macro ISR_ERR 1
 global isr%1
 isr%1:
     push dword %1
-    jmp isr_common_err
+    jmp near isr_common_err
 %endmacro
 
 ISR_NOERR 0
@@ -101,7 +105,7 @@ isr_common_err:
 global irq%1
 irq%1:
     push dword %1
-    jmp irq_common
+    jmp near irq_common
 %endmacro
 
 IRQ 32
@@ -131,7 +135,7 @@ timer_handler_asm:
     add esp, 4
 
     test eax, eax
-    jz .timer_no_switch
+    jz near .timer_no_switch
 
     mov edx, eax
 
@@ -180,13 +184,13 @@ syscall_handler_asm:
     add esp, 4
 
     cmp eax, 2
-    je .schedule
+    je near .schedule
 
     cmp eax, 3
-    je .exec
+    je near .exec
 
     cmp eax, 1
-    je .exit_to_kernel
+    je near .exit_to_kernel
 
     popad
     iretd
@@ -250,7 +254,7 @@ irq_common:
     mov eax, [esp + 32]
 
     cmp eax, 40
-    jb .master_eoi
+    jb near .master_eoi
     mov al, 0x20
     out 0xA0, al
 
