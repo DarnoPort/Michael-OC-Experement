@@ -261,18 +261,18 @@ static int load_segment(
     return 1;
 }
 
-int elf_load_user_process(struct process* process) {
-    const unsigned char* image = &user_image_start;
-    unsigned int image_size =
-        (unsigned int)(
-            &user_image_end - &user_image_start
-        );
-
+int elf_load_user_process_from_image(
+    struct process* process,
+    const unsigned char* image,
+    unsigned int image_size
+) {
     const struct elf32_header* header;
     unsigned int ph_end;
     int loaded = 0;
 
-    if (!process || image_size < sizeof(struct elf32_header)) {
+    if (!process ||
+        !image ||
+        image_size < sizeof(struct elf32_header)) {
         return 0;
     }
 
@@ -341,4 +341,18 @@ int elf_load_user_process(struct process* process) {
 
     process->entry_point = header->e_entry;
     return 1;
+}
+
+int elf_load_user_process(struct process* process) {
+    const unsigned char* image = &user_image_start;
+    unsigned int image_size =
+        (unsigned int)(
+            &user_image_end - &user_image_start
+        );
+
+    return elf_load_user_process_from_image(
+        process,
+        image,
+        image_size
+    );
 }
