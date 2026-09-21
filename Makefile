@@ -12,7 +12,7 @@ QEMU := qemu-system-i386
 
 CFLAGS := -m32 -std=gnu99 -ffreestanding -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-builtin -Wall -Wextra
 LDFLAGS := -m elf_i386 -T linker.ld
-OBJS := $(BUILD)/boot.o $(BUILD)/interrupts.o $(BUILD)/kernel.o $(BUILD)/memory.o
+OBJS := $(BUILD)/boot.o $(BUILD)/interrupts.o $(BUILD)/kernel.o $(BUILD)/memory.o $(BUILD)/paging.o
 
 .PHONY: all iso run check clean
 
@@ -31,10 +31,13 @@ $(BUILD)/boot.o: boot.asm | $(BUILD)
 $(BUILD)/interrupts.o: interrupts.asm | $(BUILD)
 	$(AS) -f elf32 $< -o $@
 
-$(BUILD)/kernel.o: kernel.c memory.h | $(BUILD)
+$(BUILD)/kernel.o: kernel.c memory.h paging.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/memory.o: memory.c memory.h | $(BUILD)
+$(BUILD)/memory.o: memory.c memory.h paging.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/paging.o: paging.c paging.h memory.h linker.ld | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 iso: $(TARGET)

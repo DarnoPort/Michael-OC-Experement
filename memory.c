@@ -1,4 +1,5 @@
 #include "memory.h"
+#include "paging.h"
 
 extern void print_char(char c, unsigned char color);
 extern void print_string(const char* str, unsigned char color);
@@ -337,7 +338,7 @@ int phys_free_page(unsigned int address) {
 }
 
 // -----------------------------------------------------------------------------
-// Kernel heap
+// Kernel heap backed by virtual pages.
 // -----------------------------------------------------------------------------
 
 #define HEAP_BLOCK_MAGIC 0x48454150U
@@ -405,10 +406,14 @@ static struct heap_block* heap_grow(unsigned int requested_size) {
         return 0;
     }
 
-    unsigned int base =
-        phys_alloc_pages((unsigned int)pages);
+    if (pages > KERNEL_VM_PAGES) {
+        return 0;
+    }
 
-    if (base == PHYS_ALLOC_FAIL) {
+    unsigned int base =
+        vm_alloc_pages((unsigned int)pages, PAGE_WRITABLE);
+
+    if (base == VM_ALLOC_FAIL) {
         return 0;
     }
 
@@ -737,7 +742,7 @@ void memory_test(void) {
         return;
     }
 
-    print_string("Running kmalloc/free test...\n", 0x0E);
+    print_string("Running virtual kmalloc/free test...\n", 0x0E);
 
     unsigned char* a = (unsigned char*)malloc(32);
     unsigned char* b = (unsigned char*)malloc(1000);

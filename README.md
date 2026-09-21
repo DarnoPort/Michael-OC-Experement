@@ -2,41 +2,70 @@
 
 Учебная 32-битная x86 ОС.
 
-Текущий этап:
+## Текущий этап — Phase 9
+
 - GRUB Multiboot
 - собственная flat GDT
 - IDT на 256 записей
+- CPU exception handlers
 - PIC 8259A
 - PIT timer 100 Hz
 - клавиатура через IRQ1
 - VGA text mode 80x25 со скроллингом
 - физический allocator страниц 4 КБ на основе Multiboot memory map
-- kernel heap с `malloc/free`
-- shell: help, clear, uptime, ticks, meminfo, physinfo, memtest
+- kernel heap с malloc/free
+- 32-битный paging без PAE
+- 4 КБ page tables для low memory
+- read-only kernel text/rodata страницы
+- null page не отображается
+- CR0.WP включён
+- отдельная kernel virtual-memory область 0xC0000000–0xC3FFFFFF
+- virtual page allocator с отображением виртуальных страниц на физические
+- kernel heap работает поверх virtual memory
+- Page Fault с расшифровкой адреса и error code
+- shell: help, clear, uptime, ticks, meminfo, physinfo, memtest, paging, vmtest, pfault
 
-## Phase 8
+## Память
 
-Физический allocator использует bitmap: один бит соответствует одной странице
-размером 4096 байт. Вначале все страницы считаются занятыми, затем области типа
-`available` из Multiboot memory map помечаются свободными.
+Phase 8 дал физический page allocator и kernel heap.
 
-Перед выдачей памяти резервируются:
-- первые 1 МБ;
-- область ядра;
-- VGA memory;
-- Multiboot information и сама memory map;
-- bitmap физического allocator'а, потому что она находится внутри BSS ядра.
+Phase 9 добавляет слой виртуальной памяти:
 
-Kernel heap использует физический allocator как источник непрерывных страниц.
-Поверх этих страниц работает first-fit allocator с разделением и слиянием
-свободных блоков.
+```
+malloc()
+   ↓
+kernel heap
+   ↓
+virtual page allocator
+   ↓
+page tables
+   ↓
+physical page allocator
+   ↓
+RAM
+```
 
-Пока paging ещё не реализован, ядро использует физические адреса напрямую.
-Поэтому непрерывность физической памяти важна для kernel heap.
+Поэтому физические страницы, выданные heap, больше не обязаны идти подряд. Виртуальный адрес heap остаётся непрерывным.
 
-## Проверка
+Первые 4 МБ физической памяти отображаются через 4 КБ page table. Нулевая страница `0x00000000` намеренно не отображается. Остальная физическая память до 4 ГБ на этапе bootstrap отображается identity mapping через 4 МБ pages. Область `0xC0000000–0xC3FFFFFF` заменена на 4 КБ page tables виртуальной памяти ядра.
 
-Сборка:
+Kernel text и rodata отображаются без разрешения записи. После включения `CR0.WP` попытка записи в такую страницу вызывает Page Fault даже в Ring 0.
+
+## Команды Phase 9
+
+```text
+paging
+vmtest
+pfault
+```
+
+`paging` показывает состояние CR0/CR3/CR4 и использование VM-области.
+
+`vmtest` выделяет две виртуальные страницы, проверяет перевод виртуальных адресов в физические, чтение/запись, затем освобождает страницы.
+
+`pfault` намеренно обращается к нулевой странице и должен завершить работу ядра с диагностикой Page Fault.
+
+## Сборка в Ubuntu
 
 ```bash
 make clean
@@ -44,17 +73,5 @@ make
 make iso
 make run
 ```
-
-В shell:
-
-```text
-meminfo
-physinfo
-memtest
-```
-
-`memtest` выделяет несколько блоков через `malloc`, записывает в них
-тестовые данные, освобождает часть блоков через `free`, снова выделяет память
-и проверяет результат.
 
 Сгенерированные `.o`, `.bin` и `.iso` не хранятся в Git.

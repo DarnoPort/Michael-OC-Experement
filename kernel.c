@@ -1,6 +1,7 @@
 #include "memory.h"
+#include "paging.h"
 
-// NanoOS Phase 8: Physical memory + kernel heap + timer + keyboard.
+// NanoOS Phase 9: paging + virtual memory + memory protection.
 
 // -----------------------------------------------------------------------------
 // 1. Работа с портами
@@ -185,8 +186,40 @@ void exception_handler_c(unsigned int vector, unsigned int error_code) {
     print_string("Exception: ", 0x4F);
     print_uint(vector, 0x4F);
 
-    print_string("\nError code: ", 0x4F);
-    print_uint(error_code, 0x4F);
+    print_string("\nError code: 0x", 0x4F);
+    print_hex32(error_code, 0x4F);
+
+    if (vector == 14) {
+        unsigned int fault_address;
+
+        __asm__ __volatile__(
+            "mov %%cr2, %0"
+            : "=r"(fault_address)
+        );
+
+        print_string("\nPage fault address: ", 0x4F);
+        print_hex32(fault_address, 0x4F);
+
+        print_string("\nReason: ", 0x4F);
+        print_string(
+            (error_code & 1U) ? "protection violation" : "non-present page",
+            0x4F
+        );
+
+        print_string("\nAccess: ", 0x4F);
+        print_string(
+            (error_code & 2U) ? "write" : "read",
+            0x4F
+        );
+
+        print_string("\nMode: ", 0x4F);
+        print_string(
+            (error_code & 4U) ? "user" : "kernel",
+            0x4F
+        );
+
+        print_string("\n", 0x4F);
+    }
 
     print_string("\nSystem halted.\n", 0x4F);
 
@@ -471,13 +504,20 @@ void kernel_main(unsigned int magic, unsigned int info_addr) {
     init_pic();
     init_pit(100);
 
-    print_string("=== NanoOS Phase 8: Physical memory + kernel heap ===\n", 0x0A);
+    print_string("=== NanoOS Phase 9: Paging + Virtual Memory ===\n", 0x0A);
 
     if (!memory_init(magic, info_addr)) {
         print_string("WARNING: physical memory manager initialization failed.\n", 0x0C);
     } else {
         print_string("Physical page allocator initialized.\n", 0x0E);
-        print_string("Kernel heap initialized on demand.\n", 0x0E);
+
+        if (!paging_init()) {
+            print_string("WARNING: paging initialization failed.\n", 0x0C);
+        } else {
+            print_string("Paging enabled.\n", 0x0E);
+            print_string("Kernel virtual memory enabled.\n", 0x0E);
+            print_string("Kernel heap now uses virtual pages.\n", 0x0E);
+        }
     }
 
     print_string("Type 'help' for commands.\n", 0x0E);
@@ -491,7 +531,7 @@ void kernel_main(unsigned int magic, unsigned int info_addr) {
 
             if (strcmp(cmd_buffer, "help") == 0) {
                 print_string(
-                    "Commands: help, clear, uptime, ticks, meminfo, physinfo, memtest\n",
+                    "Commands: help, clear, uptime, ticks, meminfo, physinfo, memtest, paging, vmtest, pfault\n",
                     0x0E
                 );
             } else if (strcmp(cmd_buffer, "uptime") == 0) {
@@ -506,6 +546,13 @@ void kernel_main(unsigned int magic, unsigned int info_addr) {
                 memory_print_stats();
             } else if (strcmp(cmd_buffer, "memtest") == 0) {
                 memory_test();
+            } else if (strcmp(cmd_buffer, "paging") == 0) {
+                paging_print_info();
+            } else if (strcmp(cmd_buffer, "vmtest") == 0) {
+                paging_test();
+            } else if (strcmp(cmd_buffer, "pfault") == 0) {
+                print_string("Triggering test page fault...\n", 0x0C);
+                paging_trigger_page_fault();
             } else if (strcmp(cmd_buffer, "clear") == 0) {
                 clear_screen();
             } else if (strcmp(cmd_buffer, "sleep") == 0) {
