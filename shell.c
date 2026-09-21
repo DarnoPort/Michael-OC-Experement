@@ -532,46 +532,35 @@ static void command_ls(const char* args) {
 static void command_dir_wide(
     const char* args
 ) {
+    const char* cursor = skip_spaces(args);
     char path[VFS_PATH_MAX];
+    char option[8];
     struct vfs_node* node;
     struct vfs_node* child;
     unsigned int column = 0;
 
-    args = skip_spaces(args);
+    if (!cursor || *cursor == '\0') {
+        shell_copy(path, shell_cwd, sizeof(path));
+    } else if (cursor[0] == '/' &&
+               (shell_lower_char(cursor[1]) == 'w') &&
+               (cursor[2] == '\0' ||
+                cursor[2] == ' ' ||
+                cursor[2] == '\t')) {
+        cursor += 2;
+        cursor = skip_spaces(cursor);
 
-    if (args &&
-        *args != '\0') {
-        if (args[0] != '/' ||
-            args[1] != 'w' ||
-            (args[2] != '\0' &&
-             args[2] != ' ' &&
-             args[2] != '\t')) {
-            if (!make_path(args, path)) {
-                print_error("dir: ", "invalid path.");
-                return;
-            }
-        } else {
-            shell_copy(
-                path,
-                shell_cwd,
-                sizeof(path)
-            );
+        if (!cursor || *cursor == '\0') {
+            shell_copy(path, shell_cwd, sizeof(path));
+        } else if (!make_path(cursor, path)) {
+            print_error("dir: ", "invalid path.");
+            return;
         }
     } else {
-        shell_copy(
-            path,
-            shell_cwd,
-            sizeof(path)
+        print_error(
+            "dir: ",
+            "usage: dir [/w] [path]"
         );
-    }
-
-    if (!args || *args == '\0' ||
-        (args[0] == '/' &&
-         args[1] == 'w' &&
-         (args[2] == '\0' ||
-          args[2] == ' ' ||
-          args[2] == '\t'))) {
-        /* path is already current directory. */
+        return;
     }
 
     node = vfs_lookup(path);
@@ -598,41 +587,38 @@ static void command_dir_wide(
     }
 
     while (child) {
-        char prefix[7];
         unsigned int name_length = 0;
-        unsigned int display_length;
+        unsigned int prefix_length;
 
         if (vfs_node_is_directory(child)) {
-            shell_copy(prefix, "[DIR] ", sizeof(prefix));
+            shell_copy(option, "[DIR] ", sizeof(option));
+            prefix_length = 6U;
         } else {
-            shell_copy(prefix, "[FILE] ", sizeof(prefix));
+            shell_copy(option, "[FILE] ", sizeof(option));
+            prefix_length = 7U;
         }
 
-        print_string(prefix, 0x07);
+        print_string(option, 0x07);
         print_string(vfs_node_name(child), 0x0F);
 
         while (vfs_node_name(child)[name_length] != '\0') {
             name_length++;
         }
 
-        display_length =
-            6U + name_length;
+        if (column == 0U) {
+            unsigned int display_length =
+                prefix_length + name_length;
 
-        if (!vfs_node_is_directory(child)) {
-            display_length = 7U + name_length;
-        }
+            column = 1U;
 
-        column++;
-
-        if (column >= 2U) {
-            print_char('\n', 0x07);
-            column = 0;
-        } else {
             if (display_length < 39U) {
                 shell_print_spaces(39U - display_length);
             } else {
                 print_char(' ', 0x07);
             }
+        } else {
+            print_char('\n', 0x07);
+            column = 0U;
         }
 
         child =
