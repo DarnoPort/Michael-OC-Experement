@@ -443,7 +443,7 @@ void kernel_main(unsigned int magic, unsigned int info_addr) {
                 syscall_run_test();
             } else if (strcmp(command, "clear") == 0) {
                 clear_screen();
-            } else if (shell_handle_command(cmd_buffer)) {
+            } else if (shell_handle_command(command)) {
                 // Filesystem/shell command was handled by shell.c.
             } else if (strcmp(command, "sleep") == 0) {
                 print_string("sleep is not implemented yet.\n", 0x09);
