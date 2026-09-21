@@ -121,6 +121,14 @@ static void shell_print_uint(
     }
 }
 
+static char shell_lower_char(char value) {
+    if (value >= 'A' && value <= 'Z') {
+        return (char)(value - 'A' + 'a');
+    }
+
+    return value;
+}
+
 static const char* skip_spaces(
     const char* text
 ) {
@@ -154,7 +162,8 @@ static int command_args(
     for (unsigned int i = 0;
          i < length;
          i++) {
-        if (cursor[i] != keyword[i]) {
+        if (shell_lower_char(cursor[i]) !=
+            shell_lower_char(keyword[i])) {
             return 0;
         }
     }
@@ -1176,6 +1185,22 @@ static void command_run(
 
 
 
+
+static int command_echo(
+    const char* args
+) {
+    const char* text = skip_spaces(args);
+
+    if (!text || *text == '\0') {
+        print_char('\n', 0x07);
+        return 1;
+    }
+
+    print_string(text, 0x0F);
+    print_char('\n', 0x07);
+    return 1;
+}
+
 static int command_install_demo(void) {
     const unsigned char* image =
         &user_image_start;
@@ -1561,6 +1586,15 @@ int shell_handle_command(
 
     if (!command) {
         return 0;
+    }
+
+    if (command_args(
+            command,
+            "echo",
+            &args
+        )) {
+        command_echo(args);
+        return 1;
     }
 
     if (command_args(
