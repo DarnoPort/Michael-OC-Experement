@@ -389,7 +389,10 @@ ps
 usertest
 diskinfo
 install-demo
+install-exec-test
 run <path>
+
+layout [en|ru]
 
 pwd
 ls [path]
