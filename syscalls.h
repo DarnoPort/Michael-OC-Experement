@@ -5,7 +5,11 @@
 #define SYS_WRITE  1U
 #define SYS_GETPID 2U
 #define SYS_YIELD  3U
-#define SYS_SBRK   4U
+#define SYS_SBRK        4U
+#define SYS_OPEN        5U
+#define SYS_FILE_READ   6U
+#define SYS_FILE_WRITE  7U
+#define SYS_CLOSE       8U
 
 void syscall_set_kernel_stack(unsigned int stack_top);
 
