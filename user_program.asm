@@ -1,4 +1,4 @@
-; NanoOS Phase 12 user program.
+; NanoOS Phase 13 user program.
 ; Loaded as an ELF32 PT_LOAD image at 0x80000000.
 ;
 ; Demonstrates:
@@ -47,7 +47,7 @@ user_program_start:
     int 0x80
 
     ; Format a one-digit demo PID followed by newline.
-    ; Phase 12 only creates low PIDs, so one byte is sufficient here.
+    ; The demo creates low PIDs, so one byte is sufficient here.
     add al, '0'
     mov byte [esi], al
     mov byte [esi + 1], 10
