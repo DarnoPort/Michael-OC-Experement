@@ -14,7 +14,7 @@ QEMU := qemu-system-i386
 
 CFLAGS := -m32 -std=gnu99 -ffreestanding -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-builtin -Wall -Wextra
 LDFLAGS := -m elf_i386 -T linker.ld
-OBJS := $(BUILD)/boot.o $(BUILD)/interrupts.o $(BUILD)/kernel.o $(BUILD)/terminal.o $(BUILD)/terminal_font.o $(BUILD)/memory.o $(BUILD)/paging.o $(BUILD)/process.o $(BUILD)/elf_loader.o $(BUILD)/syscalls.o $(BUILD)/ata.o $(BUILD)/diskfs.o $(BUILD)/vfs.o $(BUILD)/shell.o $(BUILD)/user_image.o $(BUILD)/user_exec_image.o
+OBJS := $(BUILD)/boot.o $(BUILD)/interrupts.o $(BUILD)/kernel.o $(BUILD)/terminal.o $(BUILD)/terminal_font.o $(BUILD)/memory.o $(BUILD)/paging.o $(BUILD)/process.o $(BUILD)/elf_loader.o $(BUILD)/syscalls.o $(BUILD)/ata.o $(BUILD)/diskfs.o $(BUILD)/vfs.o $(BUILD)/shell.o $(BUILD)/user_image.o $(BUILD)/user_exec_image.o $(BUILD)/user_args_image.o
 
 .PHONY: all iso disk disk-reset run check clean
 
@@ -68,6 +68,15 @@ $(BUILD)/vfs.o: vfs.c vfs.h memory.h diskfs.h | $(BUILD)
 
 $(BUILD)/shell.o: shell.c shell.h vfs.h diskfs.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/user_args_raw.o: user_args.asm | $(BUILD)
+	$(AS) -f elf32 $< -o $@
+
+$(BUILD)/user_args.elf: $(BUILD)/user_args_raw.o user.ld | $(BUILD)
+	$(LD) -m elf_i386 -T user.ld -o $@ $(BUILD)/user_args_raw.o
+
+$(BUILD)/user_args_image.o: user_args_image.asm $(BUILD)/user_args.elf | $(BUILD)
+	$(AS) -f elf32 $< -o $@
 
 $(BUILD)/user_program_raw.o: user_program.asm | $(BUILD)
 	$(AS) -f elf32 $< -o $@
