@@ -6,7 +6,7 @@
 #include "shell.h"
 #include "terminal.h"
 
-// Michael OS Phase 14: ATA PIO + persistent DiskFS.
+// Michael OS Phase 15: Text Terminal.
 
 // -----------------------------------------------------------------------------
 // 1. Работа с портами
@@ -418,34 +418,34 @@ void kernel_main(unsigned int magic, unsigned int info_addr) {
                     "Commands: help, ver, history, clear, cls, uptime, ticks, meminfo, physinfo, memtest, paging, vmtest, pfault, ps, usertest, diskinfo, pwd, ls, dir, cd, mkdir, touch, write, cat, type, open, read, close, rm, fstest\n",
                     0x0E
                 );
-            } else if (strcmp(cmd_buffer, "uptime") == 0) {
+            } else if (strcmp(command, "uptime") == 0) {
                 print_uptime();
-            } else if (strcmp(cmd_buffer, "ticks") == 0) {
+            } else if (strcmp(command, "ticks") == 0) {
                 print_string("Timer ticks: ", 0x0E);
                 print_uint(timer_ticks, 0x0F);
                 print_char('\n', 0x07);
-            } else if (strcmp(cmd_buffer, "meminfo") == 0) {
+            } else if (strcmp(command, "meminfo") == 0) {
                 memory_print_info();
-            } else if (strcmp(cmd_buffer, "physinfo") == 0) {
+            } else if (strcmp(command, "physinfo") == 0) {
                 memory_print_stats();
-            } else if (strcmp(cmd_buffer, "memtest") == 0) {
+            } else if (strcmp(command, "memtest") == 0) {
                 memory_test();
-            } else if (strcmp(cmd_buffer, "paging") == 0) {
+            } else if (strcmp(command, "paging") == 0) {
                 paging_print_info();
-            } else if (strcmp(cmd_buffer, "vmtest") == 0) {
+            } else if (strcmp(command, "vmtest") == 0) {
                 paging_test();
-            } else if (strcmp(cmd_buffer, "pfault") == 0) {
+            } else if (strcmp(command, "pfault") == 0) {
                 print_string("Triggering test page fault...\n", 0x0C);
                 paging_trigger_page_fault();
-            } else if (strcmp(cmd_buffer, "ps") == 0) {
+            } else if (strcmp(command, "ps") == 0) {
                 scheduler_print_processes();
-            } else if (strcmp(cmd_buffer, "usertest") == 0) {
+            } else if (strcmp(command, "usertest") == 0) {
                 syscall_run_test();
-            } else if (strcmp(cmd_buffer, "clear") == 0) {
+            } else if (strcmp(command, "clear") == 0) {
                 clear_screen();
             } else if (shell_handle_command(cmd_buffer)) {
                 // Filesystem/shell command was handled by shell.c.
-            } else if (strcmp(cmd_buffer, "sleep") == 0) {
+            } else if (strcmp(command, "sleep") == 0) {
                 print_string("sleep is not implemented yet.\n", 0x09);
             } else if (terminal_command_length() > 0U) {
                 print_string("Unknown command: ", 0x0C);
