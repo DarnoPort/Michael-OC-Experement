@@ -336,6 +336,8 @@ pfault
 ps
 usertest
 diskinfo
+install-demo
+run <path>
 
 pwd
 ls [path]
