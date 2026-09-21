@@ -489,8 +489,20 @@ int diskfs_init(void) {
         return 0;
     }
 
-    if (!read_superblock(&super) ||
-        super.magic[0] != DISKFS_MAGIC0 ||
+    if (!ata_read_sector(
+            DISKFS_SUPERBLOCK_SECTOR,
+            sector_buffer
+        )) {
+        return 0;
+    }
+
+    copy_memory(
+        &super,
+        sector_buffer,
+        sizeof(super)
+    );
+
+    if (super.magic[0] != DISKFS_MAGIC0 ||
         super.magic[1] != DISKFS_MAGIC1 ||
         super.magic[2] != DISKFS_MAGIC2 ||
         super.magic[3] != DISKFS_MAGIC3 ||
