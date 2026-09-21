@@ -751,7 +751,7 @@ static int command_diskinfo(void) {
 
 static int command_fstest(void) {
     static const char message[] =
-        "Hello Michael OS Phase 16!";
+        "Hello Michael OS Phase 17!";
     unsigned char buffer[
         sizeof(message)
     ];
@@ -1142,6 +1142,57 @@ static int command_install_demo(void) {
     return 1;
 }
 
+static int command_layout(
+    const char* args
+) {
+    const char* value =
+        skip_spaces(args);
+
+    if (!value || *value == '\0') {
+        print_string(
+            "Keyboard layout: ",
+            0x0E
+        );
+        print_string(
+            terminal_layout_name(),
+            0x0F
+        );
+        print_string(
+            "  (Alt+Shift to switch)\n",
+            0x07
+        );
+        return 1;
+    }
+
+    if (value[0] == 'e' &&
+        value[1] == 'n' &&
+        value[2] == '\0') {
+        terminal_set_layout(0);
+        print_string(
+            "Keyboard layout: EN\n",
+            0x0A
+        );
+        return 1;
+    }
+
+    if (value[0] == 'r' &&
+        value[1] == 'u' &&
+        value[2] == '\0') {
+        terminal_set_layout(1);
+        print_string(
+            "Keyboard layout: RU\n",
+            0x0A
+        );
+        return 1;
+    }
+
+    print_error(
+        "layout: ",
+        "usage: layout [en|ru]"
+    );
+    return 1;
+}
+
 int shell_init(void) {
     for (int fd = 0;
          fd < SHELL_FD_MAX;
@@ -1358,7 +1409,7 @@ int shell_handle_command(
         ) &&
         *skip_spaces(args) == '\0') {
         print_string(
-            "Michael OS 0.16 - 32-bit x86 experimental OS.",
+            "Michael OS 0.17 - 32-bit x86 experimental OS.",
             0x0E
         );
         print_char('\n', 0x07);
@@ -1409,6 +1460,15 @@ int shell_handle_command(
         ) &&
         *skip_spaces(args) == '\0') {
         command_install_demo();
+        return 1;
+    }
+
+    if (command_args(
+            command,
+            "layout",
+            &args
+        )) {
+        command_layout(args);
         return 1;
     }
 
