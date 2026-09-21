@@ -18,6 +18,8 @@ extern char _kernel_end;
 #define USER_PDE_INDEX (USER_VM_BASE >> 22)
 #define KERNEL_VM_TEMP_ADDRESS (KERNEL_VM_END - PAGE_SIZE)
 
+static unsigned int vm_find_free_run(unsigned int count);
+
 static unsigned int page_directory[PAGE_ENTRIES]
     __attribute__((aligned(PAGE_SIZE)));
 
