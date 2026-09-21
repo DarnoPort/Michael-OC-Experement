@@ -644,6 +644,65 @@ int diskfs_create_node(
     return 1;
 }
 
+
+int diskfs_rename_node(
+    unsigned int inode_number,
+    const char* new_name
+) {
+    struct diskfs_inode inode;
+    struct diskfs_inode candidate;
+
+    if (!diskfs_ready ||
+        inode_number == 0 ||
+        inode_number >= DISKFS_MAX_INODES ||
+        !validate_node_name(new_name) ||
+        !read_inode(
+            inode_number,
+            &inode
+        ) ||
+        !inode.used) {
+        return 0;
+    }
+
+    for (unsigned int i = 1;
+         i < DISKFS_MAX_INODES;
+         i++) {
+        if (i == inode_number) {
+            continue;
+        }
+
+        if (!read_inode(i, &candidate)) {
+            return 0;
+        }
+
+        if (candidate.used &&
+            candidate.parent == inode.parent &&
+            diskfs_name_equal(
+                &candidate,
+                new_name
+            )) {
+            return 0;
+        }
+    }
+
+    zero_memory(
+        inode.name,
+        sizeof(inode.name)
+    );
+
+    for (unsigned int i = 0;
+         i < DISKFS_NAME_MAX - 1U &&
+         new_name[i] != '\0';
+         i++) {
+        inode.name[i] = new_name[i];
+    }
+
+    return write_inode(
+        inode_number,
+        &inode
+    );
+}
+
 int diskfs_remove_node(
     unsigned int inode_number
 ) {
