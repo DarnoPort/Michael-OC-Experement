@@ -133,7 +133,8 @@ timer_handler_asm:
     out 0x20, al
     iretd
 
-; Keyboard IRQ1. EOI is sent here, not in the C handler.
+; Keyboard IRQ1.
+; EOI is sent here, exactly once.
 keyboard_handler_asm:
     pushad
     cld
