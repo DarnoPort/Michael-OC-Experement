@@ -83,7 +83,7 @@ iso: $(TARGET)
 
 disk:
 	@if [ ! -f "$(DISK)" ]; then \
-		echo "Creating $(DISK_SIZE_MB) MiB NanoOS disk image..."; \
+		echo "Creating $(DISK_SIZE_MB) MiB Michael OS disk image..."; \
 		dd if=/dev/zero of="$(DISK)" bs=1M count=$(DISK_SIZE_MB) status=none; \
 	fi
 
