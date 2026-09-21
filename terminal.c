@@ -224,7 +224,7 @@ void print_char(char c, unsigned char color) {
     vga_buffer[
         term_row * TERMINAL_WIDTH + term_col
     ] =
-        (unsigned short)c |
+        (unsigned short)(unsigned char)c |
         (color << 8);
 
     term_col++;
@@ -350,7 +350,7 @@ static void redraw_input(void) {
             prompt_row * TERMINAL_WIDTH +
             prompt_col + i
         ] =
-            (unsigned short)value |
+            (unsigned short)(unsigned char)value |
             ((i < command_length ? 0x0F : 0x07) << 8);
     }
 
