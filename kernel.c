@@ -82,6 +82,29 @@ void print_string(const char* str, unsigned char color) {
     }
 }
 
+static void print_hex_digit(unsigned int value, unsigned char color) {
+    const char* hex = "0123456789ABCDEF";
+    value &= 0xF;
+    print_char(hex[value], color);
+}
+
+static void print_hex32(unsigned int value, unsigned char color) {
+    print_string("0x", color);
+
+    for (int shift = 28; shift >= 0; shift -= 4) {
+        print_hex_digit(value >> shift, color);
+    }
+}
+
+static void print_hex64(unsigned int high, unsigned int low, unsigned char color) {
+    print_hex32(high, color);
+    print_char('_', color);
+
+    for (int shift = 28; shift >= 0; shift -= 4) {
+        print_hex_digit(low >> shift, color);
+    }
+}
+
 static void print_uint(unsigned int value, unsigned char color) {
     char digits[10];
     int n = 0;
