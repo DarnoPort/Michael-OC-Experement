@@ -13,6 +13,8 @@ extern keyboard_handler_c
 extern timer_handler_c
 extern exception_handler_c
 extern syscall_dispatch
+extern scheduler_on_timer
+extern scheduler_on_syscall
 extern user_exit_stub
 
 load_idt:
@@ -118,9 +120,34 @@ timer_handler_asm:
     pushad
     cld
     call timer_handler_c
-    popad
+
+    push esp
+    call scheduler_on_timer
+    add esp, 4
+
+    test eax, eax
+    jz .timer_no_switch
+
+    mov edx, eax
+
     mov al, 0x20
     out 0x20, al
+
+    mov esp, edx
+    mov ax, 0x23
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+
+    popad
+    iretd
+
+.timer_no_switch:
+    mov al, 0x20
+    out 0x20, al
+
+    popad
     iretd
 
 keyboard_handler_asm:
@@ -133,6 +160,11 @@ keyboard_handler_asm:
     iretd
 
 ; System call interrupt 0x80.
+;
+; syscall_dispatch() returns:
+;   0 = ordinary syscall, return to the same user context
+;   1 = return directly to the kernel shell
+;   2 = run the scheduler and switch/restore a process context
 syscall_handler_asm:
     pushad
     cld
@@ -141,8 +173,30 @@ syscall_handler_asm:
     call syscall_dispatch
     add esp, 4
 
+    cmp eax, 2
+    je .schedule
+
+    cmp eax, 1
+    je .exit_to_kernel
+
+    popad
+    iretd
+
+.schedule:
+    push esp
+    call scheduler_on_syscall
+    add esp, 4
+
     test eax, eax
-    jnz .exit_to_kernel
+    jz .exit_to_kernel
+
+    mov edx, eax
+    mov esp, edx
+    mov ax, 0x23
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
 
     popad
     iretd

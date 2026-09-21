@@ -1,5 +1,5 @@
 ; NanoOS Multiboot entry point.
-; Phase 10 adds user-mode segments and a TSS descriptor.
+; Phase 10/11: user mode, TSS and process scheduling.
 
 MBALIGN  equ  1 << 0
 MEMINFO  equ  1 << 1
@@ -96,6 +96,7 @@ enter_user_mode:
     push dword 0x23
     push edx
     pushfd
+    or dword [esp], 0x200
     push dword 0x1B
     push ecx
     iretd

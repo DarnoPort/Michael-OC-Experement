@@ -12,7 +12,7 @@ QEMU := qemu-system-i386
 
 CFLAGS := -m32 -std=gnu99 -ffreestanding -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-builtin -Wall -Wextra
 LDFLAGS := -m elf_i386 -T linker.ld
-OBJS := $(BUILD)/boot.o $(BUILD)/interrupts.o $(BUILD)/kernel.o $(BUILD)/memory.o $(BUILD)/paging.o $(BUILD)/syscalls.o $(BUILD)/user_program.o
+OBJS := $(BUILD)/boot.o $(BUILD)/interrupts.o $(BUILD)/kernel.o $(BUILD)/memory.o $(BUILD)/paging.o $(BUILD)/process.o $(BUILD)/syscalls.o $(BUILD)/user_program.o
 
 .PHONY: all iso run check clean
 
@@ -31,7 +31,7 @@ $(BUILD)/boot.o: boot.asm | $(BUILD)
 $(BUILD)/interrupts.o: interrupts.asm | $(BUILD)
 	$(AS) -f elf32 $< -o $@
 
-$(BUILD)/kernel.o: kernel.c memory.h paging.h | $(BUILD)
+$(BUILD)/kernel.o: kernel.c memory.h paging.h process.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/memory.o: memory.c memory.h paging.h | $(BUILD)
@@ -40,7 +40,10 @@ $(BUILD)/memory.o: memory.c memory.h paging.h | $(BUILD)
 $(BUILD)/paging.o: paging.c paging.h memory.h linker.ld | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/syscalls.o: syscalls.c syscalls.h memory.h paging.h | $(BUILD)
+$(BUILD)/process.o: process.c process.h memory.h paging.h syscalls.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/syscalls.o: syscalls.c syscalls.h memory.h paging.h process.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/user_program.o: user_program.asm | $(BUILD)
