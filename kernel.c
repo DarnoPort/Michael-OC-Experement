@@ -441,7 +441,8 @@ void kernel_main(unsigned int magic, unsigned int info_addr) {
                 scheduler_print_processes();
             } else if (strcmp(command, "usertest") == 0) {
                 syscall_run_test();
-            } else if (strcmp(command, "clear") == 0) {
+            } else if (strcmp(command, "clear") == 0 ||
+                       strcmp(command, "cls") == 0) {
                 clear_screen();
             } else if (shell_handle_command(command)) {
                 // Filesystem/shell command was handled by shell.c.
