@@ -1,6 +1,7 @@
 #include "memory.h"
 #include "paging.h"
 #include "syscalls.h"
+#include "process.h"
 
 // NanoOS Phase 10: user mode + system calls + TSS.
 
@@ -507,7 +508,7 @@ void kernel_main(unsigned int magic, unsigned int info_addr) {
     init_pic();
     init_pit(100);
 
-    print_string("=== NanoOS Phase 9: Paging + Virtual Memory ===\n", 0x0A);
+    print_string("=== NanoOS Phase 11: Processes + Preemptive Scheduler ===\n", 0x0A);
 
     if (!memory_init(magic, info_addr)) {
         print_string("WARNING: physical memory manager initialization failed.\n", 0x0C);
@@ -540,7 +541,7 @@ void kernel_main(unsigned int magic, unsigned int info_addr) {
 
             if (strcmp(cmd_buffer, "help") == 0) {
                 print_string(
-                    "Commands: help, clear, uptime, ticks, meminfo, physinfo, memtest, paging, vmtest, pfault, usertest\n",
+                    "Commands: help, clear, uptime, ticks, meminfo, physinfo, memtest, paging, vmtest, pfault, ps, usertest\n",
                     0x0E
                 );
             } else if (strcmp(cmd_buffer, "uptime") == 0) {
@@ -562,6 +563,8 @@ void kernel_main(unsigned int magic, unsigned int info_addr) {
             } else if (strcmp(cmd_buffer, "pfault") == 0) {
                 print_string("Triggering test page fault...\n", 0x0C);
                 paging_trigger_page_fault();
+            } else if (strcmp(cmd_buffer, "ps") == 0) {
+                scheduler_print_processes();
             } else if (strcmp(cmd_buffer, "usertest") == 0) {
                 syscall_run_test();
             } else if (strcmp(cmd_buffer, "clear") == 0) {
