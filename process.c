@@ -355,6 +355,91 @@ int process_run_image(
 }
 
 
+int process_exec_image(
+    const char* name,
+    const unsigned char* image,
+    unsigned int image_size
+) {
+    struct process candidate;
+    struct process* process;
+    unsigned int old_cr3;
+    unsigned int new_cr3;
+
+    if (!scheduler_active ||
+        current_index < 0 ||
+        !process_is_runnable(current_index) ||
+        !image ||
+        image_size == 0U) {
+        return 0;
+    }
+
+    process = &processes[current_index];
+
+    new_cr3 =
+        paging_create_address_space();
+
+    if (new_cr3 == VM_ALLOC_FAIL) {
+        return 0;
+    }
+
+    candidate.cr3 = new_cr3;
+    candidate.entry_point = 0;
+    candidate.user_stack_top = USER_STACK_TOP;
+
+    if (!elf_load_user_process_from_image(
+            &candidate,
+            image,
+            image_size
+        )) {
+        paging_destroy_address_space(new_cr3);
+        return 0;
+    }
+
+    if (!paging_allocate_user_pages(
+            new_cr3,
+            USER_STACK_BASE,
+            1,
+            PAGE_WRITABLE
+        )) {
+        paging_destroy_address_space(new_cr3);
+        return 0;
+    }
+
+    old_cr3 = process->cr3;
+
+    process->cr3 = new_cr3;
+    process->entry_point =
+        candidate.entry_point;
+    process->user_stack_top =
+        USER_STACK_TOP;
+    process->user_heap_break =
+        USER_HEAP_BASE;
+
+    if (name) {
+        copy_string(
+            process->name,
+            name
+        );
+    }
+
+    /*
+     * Reuse the same PID, kernel stack and file descriptors.
+     * Only the user address space and execution context change.
+     */
+    build_initial_context(process);
+
+    paging_switch_directory(new_cr3);
+    syscall_set_kernel_stack(
+        process->kernel_stack_top
+    );
+
+    if (!paging_destroy_address_space(old_cr3)) {
+        return 0;
+    }
+
+    return 1;
+}
+
 int scheduler_prepare_first(void) {
     int first;
 
@@ -466,6 +551,19 @@ unsigned int scheduler_on_syscall(
             PROCESS_RUNNABLE
     );
 }
+
+unsigned int scheduler_on_exec(void) {
+    if (!scheduler_active ||
+        current_index < 0 ||
+        !process_is_runnable(current_index) ||
+        processes[current_index].saved_esp == 0) {
+        return 0;
+    }
+
+    activate_process(current_index);
+    return processes[current_index].saved_esp;
+}
+
 
 int scheduler_current_pid(void) {
     if (!scheduler_active ||
