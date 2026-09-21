@@ -1,8 +1,6 @@
 #include "diskfs.h"
 #include "ata.h"
 
-extern void print_string(const char* str, unsigned char color);
-
 #define DISKFS_MAGIC0 'N'
 #define DISKFS_MAGIC1 'F'
 #define DISKFS_MAGIC2 'S'
@@ -14,7 +12,7 @@ extern void print_string(const char* str, unsigned char color);
 #define DISKFS_INODE_SECTORS     16U
 #define DISKFS_BITMAP_START      17U
 #define DISKFS_BITMAP_SECTORS    8U
-#define DISKFS_DATA_START       25U
+#define DISKFS_DATA_START        25U
 
 #define DISKFS_BITMAP_BYTES     (DISKFS_BITMAP_SECTORS * DISKFS_SECTOR_SIZE)
 
@@ -44,6 +42,7 @@ struct diskfs_inode {
 
 static int diskfs_ready = 0;
 static int diskfs_formatted = 0;
+
 static unsigned char bitmap[DISKFS_BITMAP_BYTES];
 static unsigned char sector_buffer[DISKFS_SECTOR_SIZE];
 static unsigned char inode_buffer[DISKFS_SECTOR_SIZE];
@@ -156,7 +155,7 @@ static int bitmap_save(void) {
         }
     }
 
-    return 1;
+    return ata_flush();
 }
 
 static int write_superblock(void) {
@@ -183,10 +182,12 @@ static int write_superblock(void) {
     super->bitmap_sectors = DISKFS_BITMAP_SECTORS;
     super->data_start = DISKFS_DATA_START;
 
-    return ata_write_sector(
-        DISKFS_SUPERBLOCK_SECTOR,
-        sector_buffer
-    );
+    return
+        ata_write_sector(
+            DISKFS_SUPERBLOCK_SECTOR,
+            sector_buffer
+        ) &&
+        ata_flush();
 }
 
 static int read_superblock(
@@ -237,10 +238,12 @@ static int write_inode(
         sizeof(*value)
     );
 
-    return ata_write_sector(
-        sector,
-        inode_buffer
-    );
+    return
+        ata_write_sector(
+            sector,
+            inode_buffer
+        ) &&
+        ata_flush();
 }
 
 static int read_inode(
@@ -517,6 +520,7 @@ int diskfs_init(void) {
             &root,
             sizeof(root)
         );
+
         root.used = 1;
         root.type = DISKFS_NODE_DIR;
         root.parent = 0;
@@ -605,7 +609,10 @@ int diskfs_create_node(
         return 0;
     }
 
-    if (!read_inode(parent, &candidate) ||
+    if (!read_inode(
+            parent,
+            &candidate
+        ) ||
         !candidate.used ||
         candidate.type != DISKFS_NODE_DIR) {
         return 0;
@@ -650,11 +657,16 @@ int diskfs_remove_node(
 ) {
     struct diskfs_inode inode;
     struct diskfs_inode candidate;
+    unsigned int old_start;
+    unsigned int old_sectors;
 
     if (!diskfs_ready ||
         inode_number == 0 ||
         inode_number >= DISKFS_MAX_INODES ||
-        !read_inode(inode_number, &inode) ||
+        !read_inode(
+            inode_number,
+            &inode
+        ) ||
         !inode.used) {
         return 0;
     }
@@ -674,26 +686,38 @@ int diskfs_remove_node(
         }
     }
 
-    if (inode.data_sectors) {
-        free_run(
-            inode.data_start,
-            inode.data_sectors
-        );
-
-        if (!bitmap_save()) {
-            return 0;
-        }
-    }
+    old_start = inode.data_start;
+    old_sectors = inode.data_sectors;
 
     zero_memory(
         &inode,
         sizeof(inode)
     );
 
-    return write_inode(
-        inode_number,
-        &inode
-    );
+    /*
+     * Invalidate the inode first. If updating the bitmap subsequently
+     * fails, the only consequence is leaked old data sectors, not a
+     * live inode pointing at sectors that may be reused.
+     */
+    if (!write_inode(
+            inode_number,
+            &inode
+        )) {
+        return 0;
+    }
+
+    if (old_sectors) {
+        free_run(
+            old_start,
+            old_sectors
+        );
+
+        if (!bitmap_save()) {
+            return 1;
+        }
+    }
+
+    return 1;
 }
 
 int diskfs_read_file(
@@ -707,7 +731,10 @@ int diskfs_read_file(
     if (!diskfs_ready ||
         inode_number >= DISKFS_MAX_INODES ||
         !buffer ||
-        !read_inode(inode_number, &inode) ||
+        !read_inode(
+            inode_number,
+            &inode
+        ) ||
         !inode.used ||
         inode.type != DISKFS_NODE_FILE ||
         length > inode.size) {
@@ -719,13 +746,14 @@ int diskfs_read_file(
     }
 
     if (inode.data_start < DISKFS_DATA_START ||
+        inode.data_sectors == 0 ||
         inode.data_start + inode.data_sectors >
             DISKFS_TOTAL_SECTORS) {
         return 0;
     }
 
     sectors =
-        (inode.size + DISKFS_SECTOR_SIZE - 1U) /
+        (length + DISKFS_SECTOR_SIZE - 1U) /
         DISKFS_SECTOR_SIZE;
 
     if (sectors > inode.data_sectors) {
@@ -735,11 +763,12 @@ int diskfs_read_file(
     for (unsigned int i = 0;
          i < sectors;
          i++) {
+        unsigned int offset =
+            i * DISKFS_SECTOR_SIZE;
         unsigned int chunk =
             min_u(
                 DISKFS_SECTOR_SIZE,
-                length -
-                    i * DISKFS_SECTOR_SIZE
+                length - offset
             );
 
         if (!ata_read_sector(
@@ -750,16 +779,10 @@ int diskfs_read_file(
         }
 
         copy_memory(
-            (unsigned char*)buffer +
-                i * DISKFS_SECTOR_SIZE,
+            (unsigned char*)buffer + offset,
             copy_buffer,
             chunk
         );
-
-        if (i * DISKFS_SECTOR_SIZE +
-            chunk >= length) {
-            break;
-        }
     }
 
     return 1;
@@ -780,8 +803,11 @@ int diskfs_store_file(
     if (!diskfs_ready ||
         inode_number >= DISKFS_MAX_INODES ||
         length > DISKFS_MAX_FILE_SIZE ||
-        (length > 0 && !buffer) ||
-        !read_inode(inode_number, &inode) ||
+        (length > 0U && !buffer) ||
+        !read_inode(
+            inode_number,
+            &inode
+        ) ||
         !inode.used ||
         inode.type != DISKFS_NODE_FILE) {
         return 0;
@@ -796,11 +822,8 @@ int diskfs_store_file(
         if (!find_free_run(
                 required_sectors,
                 &new_start
-            )) {
-            return 0;
-        }
-
-        if (!mark_run_used(
+            ) ||
+            !mark_run_used(
                 new_start,
                 required_sectors
             )) {
@@ -812,7 +835,7 @@ int diskfs_store_file(
                 new_start,
                 required_sectors
             );
-            bitmap_save();
+            (void)bitmap_save();
             return 0;
         }
 
@@ -853,9 +876,18 @@ int diskfs_store_file(
                     new_start,
                     required_sectors
                 );
-                bitmap_save();
+                (void)bitmap_save();
                 return 0;
             }
+        }
+
+        if (!ata_flush()) {
+            free_run(
+                new_start,
+                required_sectors
+            );
+            (void)bitmap_save();
+            return 0;
         }
     }
 
@@ -877,7 +909,7 @@ int diskfs_store_file(
                 new_start,
                 required_sectors
             );
-            bitmap_save();
+            (void)bitmap_save();
         }
         return 0;
     }
@@ -888,14 +920,11 @@ int diskfs_store_file(
             old_sectors
         );
 
-        if (!bitmap_save()) {
-            /*
-             * The inode already points at the new
-             * data. A bitmap-save failure can leak
-             * old sectors, but the file remains valid.
-             */
-            return 1;
-        }
+        /*
+         * The inode already points at the new allocation. A failed bitmap
+         * write can leak old sectors, but it cannot corrupt the new file.
+         */
+        (void)bitmap_save();
     }
 
     return 1;
@@ -911,7 +940,10 @@ int diskfs_truncate_file(
 
     if (!diskfs_ready ||
         inode_number >= DISKFS_MAX_INODES ||
-        !read_inode(inode_number, &inode) ||
+        !read_inode(
+            inode_number,
+            &inode
+        ) ||
         !inode.used ||
         inode.type != DISKFS_NODE_FILE) {
         return 0;
@@ -937,10 +969,7 @@ int diskfs_truncate_file(
             old_start,
             old_sectors
         );
-
-        if (!bitmap_save()) {
-            return 1;
-        }
+        (void)bitmap_save();
     }
 
     return 1;
