@@ -95,6 +95,13 @@ int paging_write_user_memory(
     unsigned int length
 );
 
+int paging_read_user_memory(
+    unsigned int directory,
+    unsigned int virtual_address,
+    void* destination,
+    unsigned int length
+);
+
 unsigned int vm_alloc_pages(unsigned int count, unsigned int flags);
 int vm_free_pages(unsigned int virtual_address, unsigned int count);
 

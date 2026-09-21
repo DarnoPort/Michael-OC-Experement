@@ -1075,6 +1075,81 @@ int paging_write_user_memory(
     return 1;
 }
 
+int paging_read_user_memory(
+    unsigned int directory,
+    unsigned int virtual_address,
+    void* destination,
+    unsigned int length
+) {
+    unsigned char* dst =
+        (unsigned char*)destination;
+    unsigned int remaining = length;
+
+    if (length == 0) {
+        return 1;
+    }
+
+    if (!destination ||
+        !paging_user_range_valid_in_directory(
+            directory,
+            virtual_address,
+            length,
+            0
+        )) {
+        return 0;
+    }
+
+    while (remaining > 0) {
+        unsigned int page_address =
+            align_down(virtual_address);
+        unsigned int offset =
+            virtual_address - page_address;
+        unsigned int chunk =
+            PAGE_SIZE - offset;
+
+        if (chunk > remaining) {
+            chunk = remaining;
+        }
+
+        unsigned int physical =
+            paging_get_physical_in_directory(
+                directory,
+                page_address
+            );
+
+        if (physical == VM_ALLOC_FAIL) {
+            return 0;
+        }
+
+        {
+            const unsigned char* source =
+                (const unsigned char*)(unsigned long)
+                    KERNEL_VM_TEMP_ADDRESS;
+
+            if (!paging_map_page(
+                    KERNEL_VM_TEMP_ADDRESS,
+                    physical & 0xFFFFF000U,
+                    PAGE_WRITABLE
+                )) {
+                return 0;
+            }
+
+            for (unsigned int i = 0; i < chunk; i++) {
+                dst[i] =
+                    source[offset + i];
+            }
+
+            paging_unmap_page(KERNEL_VM_TEMP_ADDRESS);
+        }
+
+        dst += chunk;
+        virtual_address += chunk;
+        remaining -= chunk;
+    }
+
+    return 1;
+}
+
 unsigned int vm_alloc_pages(unsigned int count,
                             unsigned int flags) {
     unsigned int start;

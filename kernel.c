@@ -2,8 +2,10 @@
 #include "paging.h"
 #include "syscalls.h"
 #include "process.h"
+#include "vfs.h"
+#include "shell.h"
 
-// NanoOS Phase 12: isolated address spaces + ELF loader + user heap.
+// NanoOS Phase 13: VFS + RAMFS + filesystem syscalls.
 
 // -----------------------------------------------------------------------------
 // 1. Работа с портами
@@ -508,7 +510,7 @@ void kernel_main(unsigned int magic, unsigned int info_addr) {
     init_pic();
     init_pit(100);
 
-    print_string("=== NanoOS Phase 11: Processes + Preemptive Scheduler ===\n", 0x0A);
+    print_string("=== NanoOS Phase 13: VFS + RAMFS + File Syscalls ===\n", 0x0A);
 
     if (!memory_init(magic, info_addr)) {
         print_string("WARNING: physical memory manager initialization failed.\n", 0x0C);
@@ -521,8 +523,22 @@ void kernel_main(unsigned int magic, unsigned int info_addr) {
             print_string("Paging enabled.\n", 0x0E);
             print_string("Kernel virtual memory enabled.\n", 0x0E);
             print_string("Kernel heap now uses virtual pages.\n", 0x0E);
+
+            if (!vfs_init()) {
+                print_string(
+                    "WARNING: RAMFS initialization failed.\n",
+                    0x0C
+                );
+            } else {
+                print_string(
+                    "VFS + RAMFS initialized.\n",
+                    0x0E
+                );
+            }
         }
     }
+
+    shell_init();
 
     if (!syscall_init()) {
         print_string("WARNING: Ring 3/syscall initialization failed.\n", 0x0C);
@@ -541,7 +557,7 @@ void kernel_main(unsigned int magic, unsigned int info_addr) {
 
             if (strcmp(cmd_buffer, "help") == 0) {
                 print_string(
-                    "Commands: help, clear, uptime, ticks, meminfo, physinfo, memtest, paging, vmtest, pfault, ps, usertest\n",
+                    "Commands: help, clear, uptime, ticks, meminfo, physinfo, memtest, paging, vmtest, pfault, ps, usertest, pwd, ls, cd, mkdir, touch, write, cat, open, read, close, rm, fstest\n",
                     0x0E
                 );
             } else if (strcmp(cmd_buffer, "uptime") == 0) {
@@ -569,6 +585,8 @@ void kernel_main(unsigned int magic, unsigned int info_addr) {
                 syscall_run_test();
             } else if (strcmp(cmd_buffer, "clear") == 0) {
                 clear_screen();
+            } else if (shell_handle_command(cmd_buffer)) {
+                // Filesystem/shell command was handled by shell.c.
             } else if (strcmp(cmd_buffer, "sleep") == 0) {
                 print_string("sleep is not implemented yet.\n", 0x09);
             } else if (cmd_idx > 0) {

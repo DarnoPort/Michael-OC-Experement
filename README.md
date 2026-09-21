@@ -2,14 +2,16 @@
 
 Учебная 32-битная x86 ОС.
 
-## Текущий этап — Phase 12
+## Текущий этап — Phase 13
 
-На этом этапе NanoOS переходит от нескольких user-mode задач в одном общем адресном пространстве к отдельным address spaces.
+На этом этапе NanoOS получает первую файловую подсистему: VFS поверх RAMFS.
+
+Это полностью оперативная файловая система. Она существует только до перезагрузки и не использует диск.
 
 Основные возможности:
 
 - GRUB Multiboot
-- собственная flat GDT
+- flat GDT
 - IDT на 256 записей
 - CPU exception handlers
 - PIC 8259A
@@ -30,155 +32,239 @@
 - PID и PCB для процессов
 - отдельный page directory (CR3) для каждого процесса
 - отдельная user page table для каждого процесса
-- общий kernel address space, присутствующий во всех процессах
+- общий kernel address space
 - отдельный kernel stack для каждого процесса
 - ELF32 loader из встроенного user ELF image
 - PT_LOAD загрузка, BSS zero-fill и проверка границ
 - page permissions из ELF PF_* после загрузки
-- SYS_WRITE
-- SYS_GETPID
-- SYS_YIELD
-- SYS_SBRK
-- SYS_EXIT
-- user heap в диапазоне 0x80100000–0x803EFFFF
-- shell: help, clear, uptime, ticks, meminfo, physinfo, memtest, paging, vmtest, pfault, ps, usertest
+- user heap через SYS_SBRK
+- VFS
+- RAMFS
+- дерево каталогов и файлов в памяти
+- динамически расширяемое содержимое файлов
+- file handles и offsets
+- per-process file descriptor table
+- файловые syscalls
+- shell file manager
 
-## Архитектура
+## Архитектура файловой системы
 
-Каждый пользовательский процесс имеет собственный CR3:
+Shell / user syscalls
+        |
+        v
+       VFS
+        |
+        v
+      RAMFS
+        |
+        v
+   kernel malloc()
 
-```
-Process A
-  CR3 A
-   ├── kernel mappings
-   └── user page table A
-          ├── ELF code/data
-          ├── heap
-          └── stack
+RAMFS хранит дерево:
 
-Process B
-  CR3 B
-   ├── kernel mappings
-   └── user page table B
-          ├── ELF code/data
-          ├── heap
-          └── stack
-```
+/
+├── directory/
+│   └── file.txt
+└── another.txt
 
-Kernel VM остаётся общим:
+Каждый vfs_node знает:
 
-```
-0xC0000000 - 0xC3FFFFFF
-```
+- имя;
+- тип FILE или DIR;
+- размер;
+- выделенную ёмкость;
+- указатель на данные файла;
+- parent;
+- first child;
+- next sibling;
+- количество открытых handles.
 
-User VM:
+Ограничения:
 
-```
-0x80000000 - 0x803FFFFF
-```
+128 nodes
+8 shell file descriptors
+8 file descriptors на каждый user process
+65536 bytes на один файл
 
-В одном 4 MiB user VM используется одна page table. Это специально сохраняет реализацию достаточно простой для учебной ОС, но уже даёт настоящую изоляцию адресного пространства между процессами.
+## VFS
 
-## ELF loader
+Поддерживаются:
 
-Пользовательская программа сначала собирается как отдельный ELF32:
+vfs_init()
+vfs_lookup()
+vfs_mkdir()
+vfs_create_file()
+vfs_remove()
 
-```
-user_program.asm
-      ↓ NASM
-user_program_raw.o
-      ↓ ld + user.ld
-user_program.elf
-      ↓ incbin
-kernel image
-```
+vfs_open()
+vfs_read()
+vfs_write()
+vfs_seek()
+vfs_close()
+vfs_truncate()
 
-При создании процесса loader:
+Пути VFS сейчас должны быть абсолютными:
 
-1. проверяет ELF magic/class/endianness/type/machine;
-2. проверяет таблицу program headers и границы файла;
-3. находит PT_LOAD сегменты;
-4. проверяет границы user VM;
-5. выделяет физические страницы;
-6. копирует p_filesz;
-7. зануляет p_memsz - p_filesz;
-8. выставляет конечные права страниц по PF_*;
-9. возвращает entry point процесса.
+/
+ /test
+ /test/hello.txt
 
-Сейчас для надёжности загрузчик не допускает перекрывающиеся PT_LOAD страницы.
+Shell добавляет к относительным путям свой текущий каталог.
 
-## User heap
+В путях понимаются компоненты:
 
-В процессе имеется простой program break:
+.
+..
 
-```
-USER_HEAP_BASE = 0x80100000
-USER_HEAP_END  = 0x803F0000
-```
+Удаление каталога разрешено только когда он пустой.
 
-`SYS_SBRK` принимает увеличение break в EBX и возвращает старое значение break в EAX.
+Открытый файл удалить нельзя.
 
-Пока поддерживается только рост heap. Это намеренно минимальный аналог традиционного `sbrk`, достаточный как фундамент для будущего malloc в user space.
+## Shell file manager
 
-## Демонстрация
+Команды:
 
-Команда:
+pwd
+ls [path]
+cd <path>
+mkdir <path>
+touch <path>
+write <path> <text>
+cat <path>
+open <path>
+read <fd> [length]
+close <fd>
+rm <path>
+fstest
 
-```
-> usertest
-```
+Пример:
 
-создаёт два процесса.
+> mkdir test
+> cd test
+> touch hello.txt
+> write hello.txt "Hello NanoOS!"
+> ls
+[FILE] hello.txt  13 bytes
+> cat hello.txt
+Hello NanoOS!
+> open hello.txt
+fd = 0
+> read 0
+Hello NanoOS!
+> close 0
 
-Каждый получает:
+write перезаписывает файл целиком.
 
-- собственный PID;
-- собственный CR3;
-- собственный kernel stack;
-- собственные физические user pages;
-- собственный heap.
+open открывает существующий файл для чтения и записи.
 
-Тестовая user-программа:
+read использует текущий offset file handle.
 
-- получает PID через `SYS_GETPID`;
-- резервирует страницу через `SYS_SBRK`;
-- записывает PID в свой heap;
-- вызывает `SYS_WRITE`;
-- создаёт CPU-нагрузку;
-- вызывает `SYS_YIELD`;
-- завершается через `SYS_EXIT`.
+rm удаляет файл или пустой каталог.
 
-Ожидаемый смысл вывода — повторяющиеся PID двух процессов, например:
+## RAMFS
 
-```
-1
-2
-1
-2
+Файлы не существуют после reboot:
+
+boot
+  ↓
+vfs_init()
+  ↓
+создаётся новый /
+  ↓
+старые файлы отсутствуют
+
+Это намеренно.
+
+Сейчас задача RAMFS — дать NanoOS нормальную абстракцию файловой системы до появления настоящего диска.
+
+Позже RAMFS можно заменить другим backend, не меняя VFS.
+
+## File descriptors и syscalls
+
+В каждом user process есть собственная таблица:
+
+fd 0
+fd 1
 ...
-[syscall] user process exited.
-[syscall] user process exited.
-All user processes have returned to the kernel.
->
-```
+fd 7
 
-Точный порядок зависит от работы timer scheduler.
+Она хранит указатели на kernel-side vfs_file.
 
-Команда:
+Добавлены syscalls:
 
-```
-> ps
-```
+| ID | Назначение |
+|----|------------|
+| 0 | SYS_EXIT |
+| 1 | SYS_WRITE — вывод в терминал |
+| 2 | SYS_GETPID |
+| 3 | SYS_YIELD |
+| 4 | SYS_SBRK |
+| 5 | SYS_OPEN |
+| 6 | SYS_FILE_READ |
+| 7 | SYS_FILE_WRITE |
+| 8 | SYS_CLOSE |
 
-показывает PID, состояние и CR3 процессов.
+SYS_OPEN получает пользовательский указатель на абсолютный путь и флаги.
+
+SYS_FILE_READ безопасно копирует данные из VFS через kernel buffer в user memory.
+
+SYS_FILE_WRITE сначала безопасно читает user buffer через paging API, затем передаёт его VFS.
+
+Размер одной операции файлового syscall ограничен 4096 байтами.
+
+Команда usertest теперь дополнительно проверяет файлы /worker1.txt и /worker2.txt, созданные самими Ring 3 процессами через SYS_OPEN, SYS_FILE_WRITE, SYS_FILE_READ и SYS_CLOSE. Эти файлы остаются в RAMFS после завершения процессов.
+
+Добавлена операция:
+
+paging_read_user_memory()
+
+Она симметрична существующей записи в user memory и нужна для безопасной передачи данных из Ring 3 в kernel.
+
+## Проверка
+
+Для внутреннего теста:
+
+> fstest
+fstest: PASS (RAMFS mkdir/create/open/write/read/close)
+
+Тест проверяет полный путь:
+
+mkdir
+  ↓
+create
+  ↓
+open
+  ↓
+write
+  ↓
+seek
+  ↓
+read
+  ↓
+close
+
+Для ручной проверки:
+
+> mkdir test
+> cd test
+> touch hello.txt
+> write hello.txt "Hello NanoOS!"
+> ls
+> cat hello.txt
+> open hello.txt
+> read 0
+> close 0
+> cd ..
+> rm test/hello.txt
+> rm test
 
 ## Что пока намеренно не реализовано
 
 У NanoOS всё ещё нет:
 
-- файловой системы;
 - дискового драйвера;
-- ELF-программ, загружаемых с диска;
+- persistent filesystem;
+- программ, загружаемых с диска;
 - fork/exec;
 - IPC;
 - blocked/sleeping states;
@@ -188,21 +274,43 @@ All user processes have returned to the kernel.
 - настоящего terminal device;
 - графической подсистемы.
 
-Следующая логичная крупная стадия — файловая подсистема и блочное хранилище.
-
 ## Сборка в Ubuntu
 
-```bash
 make clean
 make
 make iso
 make run
-```
 
 Для проверки только kernel image:
 
-```bash
 make check
-```
 
-Сгенерированные `.o`, `.elf`, `.bin` и `.iso` не хранятся в Git.
+Сгенерированные .o, .elf, .bin и .iso не хранятся в Git.
+
+## Следующая логическая ступень
+
+Архитектура теперь выглядит так:
+
+VFS
+ |
+ +-- RAMFS
+ |
+ +-- future disk filesystem
+
+Следующая крупная задача — драйвер блочного устройства и persistent filesystem, который сможет сохранять файлы после перезагрузки.
+
+После этого становится реалистичным путь:
+
+/bin/test.elf
+      ↓
+filesystem
+      ↓
+VFS
+      ↓
+ELF loader
+      ↓
+new process
+      ↓
+Ring 3
+
+То есть Phase 13 — фундамент для настоящего хранения программ, а не просто демонстрация kernel API.
