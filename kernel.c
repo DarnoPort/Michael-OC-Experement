@@ -365,7 +365,7 @@ void kernel_main(unsigned int magic, unsigned int info_addr) {
     init_pic();
     init_pit(100);
 
-    print_string("=== Michael OS 0.16: Executable Programs ===\n", 0x0A);
+    print_string("=== Michael OS 0.17: Exec + RU/EN Terminal ===\n", 0x0A);
 
     if (!memory_init(magic, info_addr)) {
         print_string("WARNING: physical memory manager initialization failed.\n", 0x0C);
