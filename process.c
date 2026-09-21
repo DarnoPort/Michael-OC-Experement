@@ -287,7 +287,11 @@ static unsigned int switch_to_next(
     if (next < 0) {
         if (current_index >= 0 &&
             process_is_runnable(current_index)) {
-            return 0;
+            /*
+             * A yield with no other runnable process simply resumes the
+             * current process from the saved interrupt frame.
+             */
+            return processes[current_index].saved_esp;
         }
 
         scheduler_active = 0;
