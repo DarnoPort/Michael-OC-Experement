@@ -30,6 +30,10 @@ global user_exit_stub
 
 extern kernel_main
 extern user_return_esp
+extern user_return_ebp
+extern user_return_ebx
+extern user_return_esi
+extern user_return_edi
 
 _start:
     cli
@@ -82,7 +86,13 @@ load_tss:
 
 ; [esp+4] = user EIP, [esp+8] = user ESP.
 enter_user_mode:
+    ; Preserve the kernel caller's callee-saved registers.
+    ; The Ring 3 program is free to change these registers.
     mov [user_return_esp], esp
+    mov [user_return_ebp], ebp
+    mov [user_return_ebx], ebx
+    mov [user_return_esi], esi
+    mov [user_return_edi], edi
 
     mov ecx, [esp + 4]
     mov edx, [esp + 8]
