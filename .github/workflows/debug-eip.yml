@@ -18,7 +18,10 @@ jobs:
           sudo apt-get install -y gcc-multilib nasm binutils
 
       - name: Build kernel
-        run: make clean && make
+        run: |
+          git fetch --no-tags --depth=1 origin a94480a0f9eff1b545b08b425ed1eac39c79ad59
+          git checkout a94480a0f9eff1b545b08b425ed1eac39c79ad59
+          make clean && make
 
       - name: Inspect fault EIP
         run: |
