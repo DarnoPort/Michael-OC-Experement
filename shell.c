@@ -938,6 +938,74 @@ static int command_copy(
     return 1;
 }
 
+
+static int command_rename(
+    const char* args
+) {
+    const char* cursor = skip_spaces(args);
+    char old_token[VFS_PATH_MAX];
+    char new_token[VFS_PATH_MAX];
+    char old_path[VFS_PATH_MAX];
+    char new_path[VFS_PATH_MAX];
+
+    if (!next_token(
+            &cursor,
+            old_token,
+            sizeof(old_token)
+        ) ||
+        !next_token(
+            &cursor,
+            new_token,
+            sizeof(new_token)
+        ) ||
+        *skip_spaces(cursor) != '\0' ||
+        !make_path(
+            old_token,
+            old_path
+        ) ||
+        !make_path(
+            new_token,
+            new_path
+        )) {
+        print_error(
+            "ren: ",
+            "usage: ren <old> <new>"
+        );
+        return 1;
+    }
+
+    if (!vfs_rename(
+            old_path,
+            new_path
+        )) {
+        print_error(
+            "ren: ",
+            "rename failed; use a new name in the same directory and close the file first."
+        );
+        return 1;
+    }
+
+    print_string(
+        "Renamed ",
+        0x0A
+    );
+    print_string(
+        old_token,
+        0x0F
+    );
+    print_string(
+        " -> ",
+        0x07
+    );
+    print_string(
+        new_token,
+        0x0F
+    );
+    print_char('\n', 0x07);
+
+    return 1;
+}
+
 static void command_open(const char* args) {
     char path[VFS_PATH_MAX];
     struct vfs_file* file;
@@ -1549,6 +1617,9 @@ static void command_help(
         print_string("WRITE <path> <text> - creates or replaces a text file.\n", 0x0F);
     } else if (shell_command_name_is(topic, "copy")) {
         print_string("COPY <source> <destination> - copies one file to another path.\n", 0x0F);
+    } else if (shell_command_name_is(topic, "ren") ||
+               shell_command_name_is(topic, "rename")) {
+        print_string("REN/RENAME <old> <new> - renames a file in the same directory.\n", 0x0F);
     } else if (shell_command_name_is(topic, "echo")) {
         print_string("ECHO <text> - prints text to the terminal.\n", 0x0F);
     } else if (shell_command_name_is(topic, "pwd")) {
@@ -2133,6 +2204,20 @@ int shell_handle_command(
             &args
         )) {
         command_copy(args);
+        return 1;
+    }
+
+    if (command_args(
+            command,
+            "ren",
+            &args
+        ) ||
+        command_args(
+            command,
+            "rename",
+            &args
+        )) {
+        command_rename(args);
         return 1;
     }
 
