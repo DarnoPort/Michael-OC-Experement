@@ -4,7 +4,7 @@
 
 ## Текущий этап — Phase 17
 
-На этом этапе Michael OS получает первый полноценный текстовый терминал поверх уже работающих VFS, DiskFS и Ring 3.
+На этом этапе Michael OS получает загрузку программ через `exec()` и полноценный двуязычный ввод поверх уже работающих VFS, DiskFS, Ring 3 и текстового терминала.
 
 Phase 13 давала VFS поверх RAMFS, поэтому файлы существовали только до reboot. Phase 14 сохраняет ту же VFS-интерфейсную часть, но заменяет RAMFS-хранилище на простой дисковый backend DiskFS.
 
@@ -73,7 +73,7 @@ Shell / user syscalls
 - Ctrl+C / Ctrl+L / Ctrl+U / Ctrl+A / Ctrl+E
 - встроенный CP866 Cyrillic VGA font
 
-## Phase 16: Executable Programs
+## Phase 15: Text Terminal
 
 Phase 15 отделяет консольный вывод и ввод от kernel.c в отдельный модуль terminal.c.
 
@@ -104,7 +104,7 @@ Phase 15 отделяет консольный вывод и ввод от kerne
 Michael OS 0.15
 
 > ver
-Michael OS 0.16 - 32-bit x86 experimental OS.
+Michael OS 0.15 - 32-bit x86 experimental OS.
 
 > mkdir test
 > write test/hello.txt "Hello Michael OS!"
@@ -152,49 +152,8 @@ disk image
 
 Phase 16 реализует эту ступень: ELF можно хранить на DiskFS и запускать через shell без встраивания самой программы в kernel image.
 
-## Phase 17: Exec and International Keyboard Input
 
-Phase 17 делает следующий архитектурный шаг: процесс теперь может заменить собственный user-space образ через настоящий `SYS_EXEC`, а терминал получает полноценный двуязычный ввод.
-
-Добавлено:
-
-- `SYS_EXEC` (ID 9);
-- загрузка ELF-файла из VFS внутри syscall слоя;
-- `process_exec_image()` сохраняет PID, kernel stack и открытые file descriptors, но заменяет CR3, user stack, heap и entry point;
-- отдельный путь возврата из `syscall_handler_asm` непосредственно в новый execution context;
-- `user_exec.asm` как демонстрационная программа, вызывающая `SYS_EXEC` для `/bin/demo.elf`;
-- команда `install-exec-test`, устанавливающая `/bin/exec-test.elf`;
-- Shift и CapsLock;
-- EN/RU раскладки;
-- Alt+Shift для переключения раскладки;
-- Ctrl+C отменяет текущую команду и выводит `^C`;
-- Ctrl+L очищает экран;
-- Ctrl+U очищает текущую командную строку;
-- Ctrl+A / Ctrl+E перемещают курсор в начало/конец строки;
-- 8x16 CP866 glyphs для кириллицы загружаются непосредственно в VGA font plane, сохраняя остальные ROM glyphs.
-
-Проверка `exec()`:
-
-```text
-> install-demo
-> install-exec-test
-> run /bin/exec-test.elf
-```
-
-`exec-test.elf` вызывает `SYS_EXEC`, после чего тот же процесс получает новый ELF-образ `/bin/demo.elf`. PID не меняется, а старый user address space уничтожается после переключения на новый.
-
-Проверка клавиатуры:
-
-```text
-> layout ru
-Привет Michael OS
-> layout en
-Hello Michael OS
-```
-
-В текстовом VGA режиме терминал использует однобайтные CP866-коды для кириллицы. Это сознательно не UTF-8: до графического framebuffer терминалу выгоднее сохранить компактную однобайтную модель.
-
-
+## Phase 16: Executable Programs
 
 Phase 16 делает важный архитектурный переход: программа теперь может быть обычным файлом на DiskFS.
 
@@ -250,6 +209,50 @@ Ring 3
 Это ещё не полноценный Unix `exec()`: shell пока остаётся частью kernel, а аргументы командной строки и окружение процесса ещё не передаются.
 
 Ограничение текущего этапа: DiskFS хранит максимум 64 KiB на файл, поэтому текущие ELF-программы должны укладываться в это ограничение.
+
+## Phase 17: Exec and International Keyboard Input
+
+Phase 17 делает следующий архитектурный шаг: процесс теперь может заменить собственный user-space образ через настоящий `SYS_EXEC`, а терминал получает полноценный двуязычный ввод.
+
+Добавлено:
+
+- `SYS_EXEC` (ID 9);
+- загрузка ELF-файла из VFS внутри syscall слоя;
+- `process_exec_image()` сохраняет PID, kernel stack и открытые file descriptors, но заменяет CR3, user stack, heap и entry point;
+- отдельный путь возврата из `syscall_handler_asm` непосредственно в новый execution context;
+- `user_exec.asm` как демонстрационная программа, вызывающая `SYS_EXEC` для `/bin/demo.elf`;
+- команда `install-exec-test`, устанавливающая `/bin/exec-test.elf`;
+- Shift и CapsLock;
+- EN/RU раскладки;
+- Alt+Shift для переключения раскладки;
+- Ctrl+C отменяет текущую команду и выводит `^C`;
+- Ctrl+L очищает экран;
+- Ctrl+U очищает текущую командную строку;
+- Ctrl+A / Ctrl+E перемещают курсор в начало/конец строки;
+- 8x16 CP866 glyphs для кириллицы загружаются непосредственно в VGA font plane, сохраняя остальные ROM glyphs.
+
+Проверка `exec()`:
+
+```text
+> install-demo
+> install-exec-test
+> run /bin/exec-test.elf
+```
+
+`exec-test.elf` вызывает `SYS_EXEC`, после чего тот же процесс получает новый ELF-образ `/bin/demo.elf`. PID не меняется, а старый user address space уничтожается после переключения на новый.
+
+Проверка клавиатуры:
+
+```text
+> layout ru
+Привет Michael OS
+> layout en
+Hello Michael OS
+```
+
+В текстовом VGA режиме терминал использует однобайтные CP866-коды для кириллицы. Это сознательно не UTF-8: до графического framebuffer терминалу выгоднее сохранить компактную однобайтную модель.
+
+
 
 ## Phase 14: DiskFS
 
