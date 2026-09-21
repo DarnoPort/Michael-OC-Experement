@@ -6,7 +6,7 @@
 #include "shell.h"
 #include "terminal.h"
 
-// NanoOS Phase 14: ATA PIO + persistent DiskFS.
+// Michael OS Phase 14: ATA PIO + persistent DiskFS.
 
 // -----------------------------------------------------------------------------
 // 1. Работа с портами
