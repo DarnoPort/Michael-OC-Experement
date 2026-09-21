@@ -1619,7 +1619,7 @@ static void command_help(
         print_string("COPY <source> <destination> - copies one file to another path.\n", 0x0F);
     } else if (shell_command_name_is(topic, "ren") ||
                shell_command_name_is(topic, "rename")) {
-        print_string("REN/RENAME <old> <new> - renames a file in the same directory.\n", 0x0F);
+        print_string("REN/RENAME <old> <new> - renames a file or directory in the same directory.\n", 0x0F);
     } else if (shell_command_name_is(topic, "echo")) {
         print_string("ECHO <text> - prints text to the terminal.\n", 0x0F);
     } else if (shell_command_name_is(topic, "pwd")) {
