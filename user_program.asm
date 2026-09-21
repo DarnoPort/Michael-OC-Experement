@@ -1,53 +1,71 @@
-; Ring 3 scheduler demo for NanoOS Phase 11.
+; NanoOS Phase 12 user program.
+; Loaded as an ELF32 PT_LOAD image at 0x80000000.
 ;
-; Each process has private physical code/stack pages. The scheduler maps
-; the currently running process into the fixed user virtual addresses below.
+; Demonstrates:
+; - Ring 3 syscalls
+; - per-process PID
+; - per-process user heap through sbrk
+; - scheduler yield
+; - preemptive timer switching
 
 [BITS 32]
 
 SYS_EXIT   equ 0
 SYS_WRITE  equ 1
 SYS_GETPID equ 2
+SYS_YIELD  equ 3
+SYS_SBRK   equ 4
 
-USER_CODE_BASE equ 0x80000000
-USER_STACK_TOP equ 0x80002000
+USER_HEAP_BYTES equ 4096
 
 section .text
 global user_program_start
-global user_program_end
 
 user_program_start:
-    mov edi, 5
+    ; Allocate one private heap page.
+    mov eax, SYS_SBRK
+    mov ebx, USER_HEAP_BYTES
+    int 0x80
+
+    cmp eax, 0xFFFFFFFF
+    je .exit
+
+    mov esi, eax
+    mov edi, 8
 
 .loop:
-    ; Ask the kernel for our PID.
+    ; Get current PID.
     mov eax, SYS_GETPID
     int 0x80
 
-    ; Put "<pid>\n" at the end of our private user stack page.
+    ; Format a one-digit demo PID followed by newline.
+    ; Phase 12 only creates low PIDs, so one byte is sufficient here.
     add al, '0'
-    mov byte [USER_STACK_TOP - 2], al
-    mov byte [USER_STACK_TOP - 1], 10
+    mov byte [esi], al
+    mov byte [esi + 1], 10
 
-    ; Write the two-byte message.
+    ; Write from the process-private heap.
     mov eax, SYS_WRITE
-    mov ebx, USER_STACK_TOP - 2
+    mov ebx, esi
     mov ecx, 2
     int 0x80
 
-    ; Busy work is intentional: the 100 Hz timer can preempt this process.
-    mov ecx, 10000000
+    ; Intentional CPU load so the timer can preempt us.
+    mov ecx, 5000000
 .delay:
     dec ecx
     jnz .delay
 
+    ; Also demonstrate voluntary scheduling.
+    mov eax, SYS_YIELD
+    int 0x80
+
     dec edi
     jnz .loop
 
+.exit:
     mov eax, SYS_EXIT
     int 0x80
 
 .hang:
     jmp .hang
-
-user_program_end:
