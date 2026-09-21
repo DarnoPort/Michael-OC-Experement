@@ -162,6 +162,49 @@ void print_string(
     }
 }
 
+
+static void print_hex_digit(unsigned int value, unsigned char color) {
+    const char* hex = "0123456789ABCDEF";
+    value &= 0xFU;
+    print_char(hex[value], color);
+}
+
+void print_hex32(unsigned int value, unsigned char color) {
+    print_string("0x", color);
+
+    for (int shift = 28; shift >= 0; shift -= 4) {
+        print_hex_digit(value >> shift, color);
+    }
+}
+
+void print_hex64(unsigned int high, unsigned int low, unsigned char color) {
+    print_hex32(high, color);
+    print_char('_', color);
+
+    for (int shift = 28; shift >= 0; shift -= 4) {
+        print_hex_digit(low >> shift, color);
+    }
+}
+
+void print_uint(unsigned int value, unsigned char color) {
+    char digits[10];
+    int n = 0;
+
+    if (value == 0U) {
+        print_char('0', color);
+        return;
+    }
+
+    while (value > 0U && n < 10) {
+        digits[n++] = (char)('0' + value % 10U);
+        value /= 10U;
+    }
+
+    while (n > 0) {
+        print_char(digits[--n], color);
+    }
+}
+
 static void copy_text(
     char* destination,
     const char* source
