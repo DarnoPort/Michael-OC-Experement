@@ -5,6 +5,10 @@ DISK_SIZE_MB := 16
 BUILD := build
 ISO_ROOT := $(BUILD)/isodir
 
+include version.mk
+VERSION_HEADER := $(BUILD)/version.h
+VERSION_GRUB := $(BUILD)/grub.cfg
+
 AS := nasm
 CC := gcc
 LD := ld
@@ -20,9 +24,15 @@ OBJS := $(BUILD)/boot.o $(BUILD)/interrupts.o $(BUILD)/kernel.o $(BUILD)/termina
 
 all: $(TARGET)
 
-$(TARGET): $(OBJS) linker.ld
+$(TARGET): $(OBJS) linker.ld $(VERSION_HEADER)
 	$(LD) $(LDFLAGS) -o $@ $(OBJS)
 	$(GRUB_FILE) --is-x86-multiboot $@
+
+$(VERSION_HEADER): version.mk | $(BUILD)
+	printf '%s\n' '#ifndef MICHAEL_OS_VERSION_H' '#define MICHAEL_OS_VERSION_H' '' '#define MICHAEL_OS_VERSION_STRING "$(MICHAEL_OS_VERSION)"' '#endif' > $@
+
+$(VERSION_GRUB): grub.cfg.in version.mk | $(BUILD)
+	sed 's/@VERSION@/$(MICHAEL_OS_VERSION)/g' grub.cfg.in > $@
 
 $(BUILD):
 	mkdir -p $(BUILD)
@@ -33,8 +43,8 @@ $(BUILD)/boot.o: boot.asm | $(BUILD)
 $(BUILD)/interrupts.o: interrupts.asm | $(BUILD)
 	$(AS) -f elf32 $< -o $@
 
-$(BUILD)/kernel.o: kernel.c memory.h paging.h process.h elf.h vfs.h shell.h terminal.h | $(BUILD)
-	$(CC) $(CFLAGS) -c $< -o $@
+$(BUILD)/kernel.o: kernel.c memory.h paging.h process.h elf.h vfs.h shell.h terminal.h $(VERSION_HEADER) | $(BUILD)
+	$(CC) $(CFLAGS) -I$(BUILD) -c $< -o $@
 
 $(BUILD)/terminal.o: terminal.c terminal.h terminal_font.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -66,8 +76,8 @@ $(BUILD)/diskfs.o: diskfs.c diskfs.h ata.h | $(BUILD)
 $(BUILD)/vfs.o: vfs.c vfs.h memory.h diskfs.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/shell.o: shell.c shell.h vfs.h diskfs.h terminal.h process.h memory.h | $(BUILD)
-	$(CC) $(CFLAGS) -c $< -o $@
+$(BUILD)/shell.o: shell.c shell.h vfs.h diskfs.h terminal.h process.h memory.h $(VERSION_HEADER) | $(BUILD)
+	$(CC) $(CFLAGS) -I$(BUILD) -c $< -o $@
 
 $(BUILD)/user_args_raw.o: user_args.asm | $(BUILD)
 	$(AS) -f elf32 $< -o $@
@@ -96,10 +106,10 @@ $(BUILD)/user_exec.elf: $(BUILD)/user_exec_raw.o user.ld | $(BUILD)
 $(BUILD)/user_exec_image.o: user_exec_image.asm $(BUILD)/user_exec.elf | $(BUILD)
 	$(AS) -f elf32 $< -o $@
 
-iso: $(TARGET)
+iso: $(TARGET) $(VERSION_GRUB)
 	mkdir -p $(ISO_ROOT)/boot/grub
 	cp $(TARGET) $(ISO_ROOT)/boot/myos.bin
-	cp grub.cfg $(ISO_ROOT)/boot/grub/grub.cfg
+	cp $(VERSION_GRUB) $(ISO_ROOT)/boot/grub/grub.cfg
 	$(GRUB_RES) -o $(ISO) $(ISO_ROOT)
 
 disk:
