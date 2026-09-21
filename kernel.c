@@ -588,8 +588,6 @@ void kernel_main(unsigned int magic, unsigned int info_addr) {
             } else if (shell_handle_command(cmd_buffer)) {
                 // Filesystem/shell command was handled by shell.c.
             } else if (strcmp(cmd_buffer, "sleep") == 0) {
-                clear_screen();
-            } else if (strcmp(cmd_buffer, "sleep") == 0) {
                 print_string("sleep is not implemented yet.\n", 0x09);
             } else if (cmd_idx > 0) {
                 print_string("Unknown command: ", 0x0C);
