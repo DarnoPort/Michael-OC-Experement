@@ -14,6 +14,14 @@
 #define KERNEL_VM_END  0xC4000000U
 #define KERNEL_VM_PAGES (KERNEL_VM_SIZE / PAGE_SIZE)
 
+#define USER_VM_BASE 0x80000000U
+#define USER_VM_SIZE 0x00400000U
+#define USER_VM_END  0x80400000U
+
+#define USER_CODE_BASE  0x80000000U
+#define USER_STACK_BASE 0x80001000U
+#define USER_STACK_TOP  0x80002000U
+
 int paging_init(void);
 int paging_is_enabled(void);
 unsigned int paging_get_directory(void);
@@ -22,7 +30,15 @@ int paging_map_page(unsigned int virtual_address,
                     unsigned int physical_address,
                     unsigned int flags);
 int paging_unmap_page(unsigned int virtual_address);
+int paging_map_user_page(unsigned int virtual_address,
+                         unsigned int physical_address,
+                         unsigned int flags);
+int paging_unmap_user_page(unsigned int virtual_address);
+
 unsigned int paging_get_physical(unsigned int virtual_address);
+int paging_user_range_valid(unsigned int virtual_address,
+                            unsigned int length,
+                            int write_access);
 
 unsigned int vm_alloc_pages(unsigned int count, unsigned int flags);
 int vm_free_pages(unsigned int virtual_address, unsigned int count);
