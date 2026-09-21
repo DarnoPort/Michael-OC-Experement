@@ -1,0 +1,4 @@
+menuentry "Michael OS @VERSION@ (Jubilee)" {
+    multiboot /boot/myos.bin
+    boot
+}
