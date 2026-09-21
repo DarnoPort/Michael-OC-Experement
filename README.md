@@ -2,7 +2,7 @@
 
 Учебная 32-битная x86 ОС.
 
-## Текущий этап — Phase 16
+## Текущий этап — Phase 17
 
 На этом этапе Michael OS получает первый полноценный текстовый терминал поверх уже работающих VFS, DiskFS и Ring 3.
 
@@ -65,8 +65,15 @@ Shell / user syscalls
 - файловые syscalls
 - shell file manager
 - запуск ELF32 программ с DiskFS через команду `run`
+- `SYS_EXEC` для замены текущего user process новым ELF image
+- повторное использование PID при `exec()`
+- клавиатурные раскладки EN/RU
+- Shift и CapsLock
+- Alt+Shift для переключения раскладки
+- Ctrl+C / Ctrl+L / Ctrl+U / Ctrl+A / Ctrl+E
+- встроенный CP866 Cyrillic VGA font
 
-## Phase 15: Text Terminal
+## Phase 16: Executable Programs
 
 Phase 15 отделяет консольный вывод и ввод от kernel.c в отдельный модуль terminal.c.
 
@@ -145,7 +152,49 @@ disk image
 
 Phase 16 реализует эту ступень: ELF можно хранить на DiskFS и запускать через shell без встраивания самой программы в kernel image.
 
-## Phase 16: Executable Programs
+## Phase 17: Exec and International Keyboard Input
+
+Phase 17 делает следующий архитектурный шаг: процесс теперь может заменить собственный user-space образ через настоящий `SYS_EXEC`, а терминал получает полноценный двуязычный ввод.
+
+Добавлено:
+
+- `SYS_EXEC` (ID 9);
+- загрузка ELF-файла из VFS внутри syscall слоя;
+- `process_exec_image()` сохраняет PID, kernel stack и открытые file descriptors, но заменяет CR3, user stack, heap и entry point;
+- отдельный путь возврата из `syscall_handler_asm` непосредственно в новый execution context;
+- `user_exec.asm` как демонстрационная программа, вызывающая `SYS_EXEC` для `/bin/demo.elf`;
+- команда `install-exec-test`, устанавливающая `/bin/exec-test.elf`;
+- Shift и CapsLock;
+- EN/RU раскладки;
+- Alt+Shift для переключения раскладки;
+- Ctrl+C отменяет текущую команду и выводит `^C`;
+- Ctrl+L очищает экран;
+- Ctrl+U очищает текущую командную строку;
+- Ctrl+A / Ctrl+E перемещают курсор в начало/конец строки;
+- 8x16 CP866 glyphs для кириллицы загружаются непосредственно в VGA font plane, сохраняя остальные ROM glyphs.
+
+Проверка `exec()`:
+
+```text
+> install-demo
+> install-exec-test
+> run /bin/exec-test.elf
+```
+
+`exec-test.elf` вызывает `SYS_EXEC`, после чего тот же процесс получает новый ELF-образ `/bin/demo.elf`. PID не меняется, а старый user address space уничтожается после переключения на новый.
+
+Проверка клавиатуры:
+
+```text
+> layout ru
+Привет Michael OS
+> layout en
+Hello Michael OS
+```
+
+В текстовом VGA режиме терминал использует однобайтные CP866-коды для кириллицы. Это сознательно не UTF-8: до графического framebuffer терминалу выгоднее сохранить компактную однобайтную модель.
+
+
 
 Phase 16 делает важный архитектурный переход: программа теперь может быть обычным файлом на DiskFS.
 
@@ -486,8 +535,8 @@ make check
 
 У Michael OS всё ещё нет:
 
-- программ, загружаемых с диска;
-- fork/exec;
+- fork;
+
 - IPC;
 - blocked/sleeping states;
 - полноценного user malloc/free;
@@ -519,16 +568,14 @@ Ring 3
 
 Phase 16 превращает DiskFS из хранилища данных в источник исполняемых программ.
 
-После неё можно отдельно заниматься:
+Следующие ступени можно посвятить:
 
-- загрузкой ELF непосредственно из VFS;
-- exec();
-- созданием процессов из файлов;
-- нормальным shell для запуска программ;
-- более серьёзной файловой системой;
-- устройствами как файлами;
-- blocked processes и sleep();
-- развитием текстового terminal UI.
+- `fork()`;
+- `argv` / `argc` и окружению процесса;
+- stdin / stdout / stderr как настоящим файловым дескрипторам;
+- blocked processes и `sleep()`;
+- user-space runtime / libc-подобной библиотеке;
+- framebuffer и графической подсистеме.
 
 ## Toolchain
 
