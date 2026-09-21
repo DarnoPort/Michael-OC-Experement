@@ -1,7 +1,8 @@
 #include "memory.h"
 #include "paging.h"
+#include "syscalls.h"
 
-// NanoOS Phase 9: paging + virtual memory + memory protection.
+// NanoOS Phase 10: user mode + system calls + TSS.
 
 // -----------------------------------------------------------------------------
 // 1. Работа с портами
@@ -150,6 +151,7 @@ struct idt_ptr idtp;
 extern void load_idt(unsigned int);
 extern void keyboard_handler_asm(void);
 extern void timer_handler_asm(void);
+extern void syscall_handler_asm(void);
 
 #define DECLARE_ISR(n) extern void isr##n();
 DECLARE_ISR(0) DECLARE_ISR(1) DECLARE_ISR(2) DECLARE_ISR(3)
@@ -499,6 +501,7 @@ void kernel_main(unsigned int magic, unsigned int info_addr) {
 
     idt_set_gate(32, (unsigned int)timer_handler_asm, 0x08, 0x8E);
     idt_set_gate(33, (unsigned int)keyboard_handler_asm, 0x08, 0x8E);
+    idt_set_gate(128, (unsigned int)syscall_handler_asm, 0x08, 0xEE);
 
     load_idt((unsigned int)&idtp);
     init_pic();
@@ -520,6 +523,12 @@ void kernel_main(unsigned int magic, unsigned int info_addr) {
         }
     }
 
+    if (!syscall_init()) {
+        print_string("WARNING: Ring 3/syscall initialization failed.\n", 0x0C);
+    } else {
+        print_string("Ring 3 and syscall interface initialized.\n", 0x0E);
+    }
+
     print_string("Type 'help' for commands.\n", 0x0E);
     print_string("> ", 0x0B);
 
@@ -531,7 +540,7 @@ void kernel_main(unsigned int magic, unsigned int info_addr) {
 
             if (strcmp(cmd_buffer, "help") == 0) {
                 print_string(
-                    "Commands: help, clear, uptime, ticks, meminfo, physinfo, memtest, paging, vmtest, pfault\n",
+                    "Commands: help, clear, uptime, ticks, meminfo, physinfo, memtest, paging, vmtest, pfault, usertest\n",
                     0x0E
                 );
             } else if (strcmp(cmd_buffer, "uptime") == 0) {
@@ -553,6 +562,8 @@ void kernel_main(unsigned int magic, unsigned int info_addr) {
             } else if (strcmp(cmd_buffer, "pfault") == 0) {
                 print_string("Triggering test page fault...\n", 0x0C);
                 paging_trigger_page_fault();
+            } else if (strcmp(cmd_buffer, "usertest") == 0) {
+                syscall_run_test();
             } else if (strcmp(cmd_buffer, "clear") == 0) {
                 clear_screen();
             } else if (strcmp(cmd_buffer, "sleep") == 0) {
