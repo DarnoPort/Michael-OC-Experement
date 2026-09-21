@@ -190,26 +190,6 @@ static int write_superblock(void) {
         ata_flush();
 }
 
-static int read_superblock(
-    struct diskfs_superblock* super
-) {
-    if (!super ||
-        !ata_read_sector(
-            DISKFS_SUPERBLOCK_SECTOR,
-            sector_buffer
-        )) {
-        return 0;
-    }
-
-    copy_memory(
-        super,
-        sector_buffer,
-        sizeof(*super)
-    );
-
-    return 1;
-}
-
 static int write_inode(
     unsigned int inode,
     const struct diskfs_inode* value
