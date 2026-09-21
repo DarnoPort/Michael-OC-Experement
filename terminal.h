@@ -24,5 +24,8 @@ unsigned int terminal_command_length(void);
 void terminal_command_consumed(void);
 
 void terminal_print_history(void);
+void terminal_set_layout(int layout);
+int terminal_get_layout(void);
+const char* terminal_layout_name(void);
 
 #endif
