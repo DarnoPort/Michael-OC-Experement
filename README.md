@@ -2,9 +2,9 @@
 
 Учебная 32-битная x86 ОС.
 
-## Текущий этап — Phase 18
+## Текущий этап — Phase 19
 
-На этом этапе Michael OS получает стандартный интерфейс аргументов процесса: `argc`/`argv` передаются ELF-программе при запуске через `run`, включая аргументы из командной строки.
+На этом этапе Michael OS доводит ABI аргументов процесса до `exec()`: и `run`, и `SYS_EXEC` передают ELF-программе `argc`/`argv`.
 
 Phase 13 давала VFS поверх RAMFS, поэтому файлы существовали только до reboot. Phase 14 сохраняет ту же VFS-интерфейсную часть, но заменяет RAMFS-хранилище на простой дисковый backend DiskFS.
 
@@ -259,7 +259,36 @@ argv[2]=beta
 argv[3]=hello world
 ```
 
-Это ещё не полноценный Unix process environment: `SYS_EXEC` пока принимает только путь и не умеет передавать новый `argv`, а `envp` не реализован.
+Это ещё не полноценный Unix process environment: `envp` не реализован, а shell остаётся частью ядра.
+
+## Phase 19: Exec Arguments
+
+Phase 19 завершает связку `run` → `argc/argv` → `exec()`.
+
+Добавлено:
+
+- новый вариант `process_exec_image_with_args()`, который строит новый user stack с переданным `argc`/`argv`;
+- `SYS_EXEC` теперь принимает ABI: `EBX = path`, `ECX = argv`, `EDX = argc`;
+- ядро копирует массив указателей и строки `argv` из старого address space до переключения CR3;
+- проверяется `argv[argc] == NULL`;
+- PID, kernel stack и открытые file descriptors сохраняются при `exec()`;
+- `user_exec.asm` теперь запускает `/bin/args-test.elf` и передаёт ему аргументы;
+- существующий `args-test` тем самым показывает параметры уже после замены процесса, а не только после `run`.
+
+Проверка:
+
+```text
+> install-args-test
+> install-exec-test
+> run /bin/exec-test.elf
+=== argv test ===
+argc=3
+argv[0]=/bin/args-test.elf
+argv[1]=exec
+argv[2]=phase19
+```
+
+Важный результат: после успешного `exec()` новый ELF получает нормальный стартовый стек с тем же процессом, но с новым `argv`. Это уже позволяет строить следующий слой — пользовательские runtime-библиотеки и настоящую модель запуска программ.
 
 ## Phase 17: Exec and International Keyboard Input
 
