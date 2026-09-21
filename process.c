@@ -578,10 +578,12 @@ int process_run_image(
 }
 
 
-int process_exec_image(
+int process_exec_image_with_args(
     const char* name,
     const unsigned char* image,
-    unsigned int image_size
+    unsigned int image_size,
+    unsigned int argc,
+    const char* const* argv
 ) {
     struct process candidate;
     struct process* process;
@@ -592,7 +594,10 @@ int process_exec_image(
         current_index < 0 ||
         !process_is_runnable(current_index) ||
         !image ||
-        image_size == 0U) {
+        image_size == 0U ||
+        argc == 0U ||
+        argc > PROCESS_ARG_MAX ||
+        !argv) {
         return 0;
     }
 
@@ -608,6 +613,8 @@ int process_exec_image(
     candidate.cr3 = new_cr3;
     candidate.entry_point = 0;
     candidate.user_stack_top = USER_STACK_TOP;
+    candidate.initial_user_esp = USER_STACK_TOP;
+    candidate.user_heap_break = USER_HEAP_BASE;
 
     if (!elf_load_user_process_from_image(
             &candidate,
@@ -628,6 +635,15 @@ int process_exec_image(
         return 0;
     }
 
+    if (!process_setup_arguments(
+            &candidate,
+            argc,
+            argv
+        )) {
+        paging_destroy_address_space(new_cr3);
+        return 0;
+    }
+
     old_cr3 = process->cr3;
 
     process->cr3 = new_cr3;
@@ -636,7 +652,7 @@ int process_exec_image(
     process->user_stack_top =
         USER_STACK_TOP;
     process->initial_user_esp =
-        USER_STACK_TOP;
+        candidate.initial_user_esp;
     process->user_heap_break =
         USER_HEAP_BASE;
 
@@ -662,6 +678,24 @@ int process_exec_image(
     (void)paging_destroy_address_space(old_cr3);
 
     return 1;
+}
+
+int process_exec_image(
+    const char* name,
+    const unsigned char* image,
+    unsigned int image_size
+) {
+    const char* default_argv[1];
+
+    default_argv[0] = name ? name : "";
+
+    return process_exec_image_with_args(
+        name,
+        image,
+        image_size,
+        1,
+        default_argv
+    );
 }
 
 int scheduler_prepare_first(void) {
