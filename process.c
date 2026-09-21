@@ -2,6 +2,7 @@
 #include "memory.h"
 #include "paging.h"
 #include "elf.h"
+#include "vfs.h"
 
 extern void print_char(char c, unsigned char color);
 extern void print_string(const char* str, unsigned char color);
@@ -156,6 +157,9 @@ void scheduler_init(void) {
             VM_ALLOC_FAIL;
         processes[i].saved_esp = 0;
         processes[i].started = 0;
+        for (int fd = 0; fd < PROCESS_FD_MAX; fd++) {
+            processes[i].files[fd] = 0;
+        }
         processes[i].name[0] = '\0';
     }
 
@@ -269,6 +273,10 @@ int process_create(const char* name) {
 
     process->user_heap_break =
         USER_HEAP_BASE;
+
+    for (int fd = 0; fd < PROCESS_FD_MAX; fd++) {
+        process->files[fd] = 0;
+    }
 
     copy_string(
         process->name,
@@ -426,6 +434,67 @@ unsigned int scheduler_current_stack_top(void) {
     return processes[current_index].user_stack_top;
 }
 
+unsigned int scheduler_current_cr3(void) {
+    if (!scheduler_active ||
+        current_index < 0 ||
+        !process_is_runnable(current_index)) {
+        return VM_ALLOC_FAIL;
+    }
+
+    return processes[current_index].cr3;
+}
+
+int process_fd_install(struct vfs_file* file) {
+    if (!scheduler_active ||
+        current_index < 0 ||
+        !process_is_runnable(current_index) ||
+        !file) {
+        return -1;
+    }
+
+    for (int fd = 0; fd < PROCESS_FD_MAX; fd++) {
+        if (!processes[current_index].files[fd]) {
+            processes[current_index].files[fd] = file;
+            return fd;
+        }
+    }
+
+    return -1;
+}
+
+struct vfs_file* process_fd_get(int fd) {
+    if (!scheduler_active ||
+        current_index < 0 ||
+        !process_is_runnable(current_index) ||
+        fd < 0 ||
+        fd >= PROCESS_FD_MAX) {
+        return 0;
+    }
+
+    return processes[current_index].files[fd];
+}
+
+int process_fd_close(int fd) {
+    struct vfs_file* file;
+
+    if (!scheduler_active ||
+        current_index < 0 ||
+        !process_is_runnable(current_index) ||
+        fd < 0 ||
+        fd >= PROCESS_FD_MAX) {
+        return 0;
+    }
+
+    file = processes[current_index].files[fd];
+
+    if (!file) {
+        return 0;
+    }
+
+    processes[current_index].files[fd] = 0;
+    return vfs_close(file);
+}
+
 int process_sbrk(
     unsigned int increment,
     unsigned int* old_break
@@ -491,6 +560,15 @@ int process_exit_current(void) {
         current_index < 0 ||
         !process_is_runnable(current_index)) {
         return 0;
+    }
+
+    for (int fd = 0; fd < PROCESS_FD_MAX; fd++) {
+        if (processes[current_index].files[fd]) {
+            vfs_close(
+                processes[current_index].files[fd]
+            );
+            processes[current_index].files[fd] = 0;
+        }
     }
 
     processes[current_index].state =
@@ -608,6 +686,9 @@ void scheduler_cleanup(void) {
         process->kernel_stack_top = 0;
         process->saved_esp = 0;
         process->started = 0;
+        for (int fd = 0; fd < PROCESS_FD_MAX; fd++) {
+            process->files[fd] = 0;
+        }
         process->name[0] = '\0';
     }
 
