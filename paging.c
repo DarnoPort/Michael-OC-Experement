@@ -24,22 +24,21 @@ static unsigned int low_identity_table[PAGE_ENTRIES]
 static unsigned int kernel_vm_tables[16][PAGE_ENTRIES]
     __attribute__((aligned(PAGE_SIZE)));
 
+static unsigned int user_page_table[PAGE_ENTRIES]
+    __attribute__((aligned(PAGE_SIZE)));
+
 static unsigned char vm_used[VM_BITMAP_SIZE];
 
 static int paging_ready = 0;
 
 static unsigned int irq_save_paging(void) {
     unsigned int flags;
-
     __asm__ __volatile__(
         "pushfl\n"
         "popl %0\n"
         "cli"
-        : "=r"(flags)
-        :
-        : "memory"
+        : "=r"(flags) : : "memory"
     );
-
     return flags;
 }
 
@@ -47,18 +46,14 @@ static void irq_restore_paging(unsigned int flags) {
     __asm__ __volatile__(
         "pushl %0\n"
         "popfl"
-        :
-        : "r"(flags)
-        : "memory", "cc"
+        : : "r"(flags) : "memory", "cc"
     );
 }
 
 static void invlpg(unsigned int address) {
     __asm__ __volatile__(
         "invlpg (%0)"
-        :
-        : "r"(address)
-        : "memory"
+        : : "r"(address) : "memory"
     );
 }
 
@@ -81,12 +76,7 @@ static unsigned int read_cr4(void) {
 }
 
 static void write_cr3(unsigned int value) {
-    __asm__ __volatile__(
-        "mov %0, %%cr3"
-        :
-        : "r"(value)
-        : "memory"
-    );
+    __asm__ __volatile__("mov %0, %%cr3" : : "r"(value) : "memory");
 }
 
 static unsigned int bitmap_byte(unsigned int page) {
@@ -145,31 +135,25 @@ static void initialize_kernel_vm_tables(void) {
     }
 }
 
+static void initialize_user_vm_table(void) {
+    for (unsigned int entry = 0; entry < PAGE_ENTRIES; entry++) {
+        user_page_table[entry] = 0;
+    }
+}
+
 static void enable_paging(void) {
-    unsigned int cr4;
+    unsigned int cr4 = read_cr4();
     unsigned int cr0;
 
-    cr4 = read_cr4();
-    cr4 |= (1U << 4);          // CR4.PSE: 4 MiB identity mappings.
-    __asm__ __volatile__(
-        "mov %0, %%cr4"
-        :
-        : "r"(cr4)
-        : "memory"
-    );
+    cr4 |= (1U << 4);          // CR4.PSE
+    __asm__ __volatile__("mov %0, %%cr4" : : "r"(cr4) : "memory");
 
     write_cr3((unsigned int)(unsigned long)page_directory);
 
     cr0 = read_cr0();
-    cr0 |= (1U << 16);         // CR0.WP: kernel respects read-only pages.
-    cr0 |= (1U << 31);         // CR0.PG: enable paging.
-
-    __asm__ __volatile__(
-        "mov %0, %%cr0"
-        :
-        : "r"(cr0)
-        : "memory"
-    );
+    cr0 |= (1U << 16);         // CR0.WP
+    cr0 |= (1U << 31);         // CR0.PG
+    __asm__ __volatile__("mov %0, %%cr0" : : "r"(cr0) : "memory");
 }
 
 int paging_init(void) {
@@ -187,20 +171,23 @@ int paging_init(void) {
     }
 
     initialize_low_identity_table();
-
     page_directory[0] =
         ((unsigned int)(unsigned long)low_identity_table) |
         PAGE_TABLE_FLAG;
 
     initialize_kernel_vm_tables();
+    initialize_user_vm_table();
 
     for (unsigned int table = 0; table < 16; table++) {
         unsigned int pde = 768U + table;
-
         page_directory[pde] =
             ((unsigned int)(unsigned long)kernel_vm_tables[table]) |
             PAGE_TABLE_FLAG;
     }
+
+    page_directory[USER_VM_BASE >> 22] =
+        ((unsigned int)(unsigned long)user_page_table) |
+        PAGE_TABLE_FLAG | PAGE_USER;
 
     for (unsigned int i = 0; i < VM_BITMAP_SIZE; i++) {
         vm_used[i] = 0;
@@ -208,7 +195,6 @@ int paging_init(void) {
 
     enable_paging();
     paging_ready = 1;
-
     return 1;
 }
 
@@ -224,10 +210,8 @@ unsigned int paging_get_directory(void) {
 int paging_map_page(unsigned int virtual_address,
                     unsigned int physical_address,
                     unsigned int flags) {
-    unsigned int pde_index;
-    unsigned int pte_index;
     unsigned int table_index;
-    unsigned int* table;
+    unsigned int pte_index;
 
     if (!paging_ready ||
         (virtual_address & (PAGE_SIZE - 1U)) != 0 ||
@@ -237,31 +221,25 @@ int paging_map_page(unsigned int virtual_address,
         return 0;
     }
 
-    pde_index = virtual_address >> 22;
-    table_index = pde_index - 768U;
+    table_index = (virtual_address >> 22) - 768U;
     pte_index = (virtual_address >> 12) & 0x3FFU;
 
     if (table_index >= 16U) {
         return 0;
     }
 
-    table = kernel_vm_tables[table_index];
-
-    table[pte_index] =
+    kernel_vm_tables[table_index][pte_index] =
         (physical_address & 0xFFFFF000U) |
         (flags & 0x00000FFFU) |
         PAGE_PRESENT;
 
     invlpg(virtual_address);
-
     return 1;
 }
 
 int paging_unmap_page(unsigned int virtual_address) {
-    unsigned int pde_index;
-    unsigned int pte_index;
     unsigned int table_index;
-    unsigned int* table;
+    unsigned int pte_index;
 
     if (!paging_ready ||
         (virtual_address & (PAGE_SIZE - 1U)) != 0 ||
@@ -270,44 +248,90 @@ int paging_unmap_page(unsigned int virtual_address) {
         return 0;
     }
 
-    pde_index = virtual_address >> 22;
-    table_index = pde_index - 768U;
+    table_index = (virtual_address >> 22) - 768U;
     pte_index = (virtual_address >> 12) & 0x3FFU;
 
     if (table_index >= 16U) {
         return 0;
     }
 
-    table = kernel_vm_tables[table_index];
-    table[pte_index] = 0;
+    kernel_vm_tables[table_index][pte_index] = 0;
     invlpg(virtual_address);
+    return 1;
+}
 
+int paging_map_user_page(unsigned int virtual_address,
+                         unsigned int physical_address,
+                         unsigned int flags) {
+    unsigned int pte_index;
+
+    if (!paging_ready ||
+        (virtual_address & (PAGE_SIZE - 1U)) != 0 ||
+        (physical_address & (PAGE_SIZE - 1U)) != 0 ||
+        virtual_address < USER_VM_BASE ||
+        virtual_address >= USER_VM_END) {
+        return 0;
+    }
+
+    pte_index = (virtual_address - USER_VM_BASE) >> 12;
+
+    if (pte_index >= PAGE_ENTRIES) {
+        return 0;
+    }
+
+    user_page_table[pte_index] =
+        (physical_address & 0xFFFFF000U) |
+        (flags & 0x00000FFFU) |
+        PAGE_PRESENT | PAGE_USER;
+
+    invlpg(virtual_address);
+    return 1;
+}
+
+int paging_unmap_user_page(unsigned int virtual_address) {
+    unsigned int pte_index;
+
+    if (!paging_ready ||
+        (virtual_address & (PAGE_SIZE - 1U)) != 0 ||
+        virtual_address < USER_VM_BASE ||
+        virtual_address >= USER_VM_END) {
+        return 0;
+    }
+
+    pte_index = (virtual_address - USER_VM_BASE) >> 12;
+
+    if (pte_index >= PAGE_ENTRIES) {
+        return 0;
+    }
+
+    user_page_table[pte_index] = 0;
+    invlpg(virtual_address);
     return 1;
 }
 
 unsigned int paging_get_physical(unsigned int virtual_address) {
-    unsigned int pde_index;
-    unsigned int pte_index;
+    unsigned int pde_index = virtual_address >> 22;
+    unsigned int pte_index = (virtual_address >> 12) & 0x3FFU;
     unsigned int table_index;
-    unsigned int* table;
     unsigned int entry;
 
-    if (!paging_ready ||
-        virtual_address < KERNEL_VM_BASE ||
-        virtual_address >= KERNEL_VM_END) {
+    if (!paging_ready) {
         return VM_ALLOC_FAIL;
     }
 
-    pde_index = virtual_address >> 22;
-    table_index = pde_index - 768U;
-    pte_index = (virtual_address >> 12) & 0x3FFU;
-
-    if (table_index >= 16U) {
+    if (virtual_address >= KERNEL_VM_BASE &&
+        virtual_address < KERNEL_VM_END) {
+        table_index = pde_index - 768U;
+        if (table_index >= 16U) {
+            return VM_ALLOC_FAIL;
+        }
+        entry = kernel_vm_tables[table_index][pte_index];
+    } else if (virtual_address >= USER_VM_BASE &&
+               virtual_address < USER_VM_END) {
+        entry = user_page_table[(virtual_address - USER_VM_BASE) >> 12];
+    } else {
         return VM_ALLOC_FAIL;
     }
-
-    table = kernel_vm_tables[table_index];
-    entry = table[pte_index];
 
     if (!(entry & PAGE_PRESENT)) {
         return VM_ALLOC_FAIL;
@@ -315,6 +339,39 @@ unsigned int paging_get_physical(unsigned int virtual_address) {
 
     return (entry & 0xFFFFF000U) |
            (virtual_address & 0x00000FFFU);
+}
+
+int paging_user_range_valid(unsigned int virtual_address,
+                            unsigned int length,
+                            int write_access) {
+    unsigned int end;
+
+    if (!paging_ready || length == 0) {
+        return 0;
+    }
+
+    end = virtual_address + length;
+    if (end < virtual_address ||
+        virtual_address < USER_VM_BASE ||
+        end > USER_VM_END) {
+        return 0;
+    }
+
+    for (unsigned int address = virtual_address & 0xFFFFF000U;
+         address < end;
+         address += PAGE_SIZE) {
+        unsigned int index =
+            (address - USER_VM_BASE) >> 12;
+        unsigned int entry = user_page_table[index];
+
+        if (!(entry & PAGE_PRESENT) ||
+            !(entry & PAGE_USER) ||
+            (write_access && !(entry & PAGE_WRITABLE))) {
+            return 0;
+        }
+    }
+
+    return 1;
 }
 
 static unsigned int vm_find_free_run(unsigned int count) {
@@ -360,24 +417,20 @@ unsigned int vm_alloc_pages(unsigned int count, unsigned int flags) {
     flags_saved = irq_save_paging();
 
     for (unsigned int i = 0; i < count; i++) {
-        unsigned int physical =
-            phys_alloc_page();
-
+        unsigned int physical = phys_alloc_page();
         unsigned int virtual_address =
-            KERNEL_VM_BASE +
-            (start + i) * PAGE_SIZE;
+            KERNEL_VM_BASE + (start + i) * PAGE_SIZE;
 
         if (physical == VM_ALLOC_FAIL ||
             !paging_map_page(virtual_address, physical, flags)) {
             for (unsigned int j = 0; j < mapped; j++) {
                 unsigned int v =
-                    KERNEL_VM_BASE +
-                    (start + j) * PAGE_SIZE;
-                unsigned int p = paging_get_physical(v);
+                    KERNEL_VM_BASE + (start + j) * PAGE_SIZE;
+                unsigned int phys = paging_get_physical(v);
 
-                if (p != VM_ALLOC_FAIL) {
+                if (phys != VM_ALLOC_FAIL) {
                     paging_unmap_page(v);
-                    phys_free_page(p & 0xFFFFF000U);
+                    phys_free_page(phys & 0xFFFFF000U);
                 }
             }
 
@@ -400,7 +453,6 @@ unsigned int vm_alloc_pages(unsigned int count, unsigned int flags) {
     }
 
     irq_restore_paging(flags_saved);
-
     return KERNEL_VM_BASE + start * PAGE_SIZE;
 }
 
@@ -415,8 +467,7 @@ int vm_free_pages(unsigned int virtual_address, unsigned int count) {
         return 0;
     }
 
-    start =
-        (virtual_address - KERNEL_VM_BASE) / PAGE_SIZE;
+    start = (virtual_address - KERNEL_VM_BASE) / PAGE_SIZE;
 
     if (start + count > KERNEL_VM_PAGES) {
         return 0;
@@ -438,18 +489,18 @@ int vm_free_pages(unsigned int virtual_address, unsigned int count) {
     for (unsigned int i = 0; i < count; i++) {
         unsigned int v =
             KERNEL_VM_BASE + (start + i) * PAGE_SIZE;
-        unsigned int p = paging_get_physical(v);
+        unsigned int phys = paging_get_physical(v);
 
         paging_unmap_page(v);
-        if (p != VM_ALLOC_FAIL) {
-            phys_free_page(p & 0xFFFFF000U);
+
+        if (phys != VM_ALLOC_FAIL) {
+            phys_free_page(phys & 0xFFFFF000U);
         }
 
         vm_bitmap_clear(start + i);
     }
 
     irq_restore_paging(flags_saved);
-
     return 1;
 }
 
@@ -520,7 +571,13 @@ void paging_print_info(void) {
         0x0F
     );
 
-    print_string("Kernel VM:     ", 0x0E);
+    print_string("User VM:        ", 0x0E);
+    paging_print_hex32(USER_VM_BASE, 0x0F);
+    print_string(" - ", 0x07);
+    paging_print_hex32(USER_VM_END - 1U, 0x0F);
+    print_char('\n', 0x07);
+
+    print_string("Kernel VM:      ", 0x0E);
     paging_print_hex32(KERNEL_VM_BASE, 0x0F);
     print_string(" - ", 0x07);
     paging_print_hex32(KERNEL_VM_END - 1U, 0x0F);
@@ -601,7 +658,8 @@ void paging_test(void) {
 }
 
 void paging_trigger_page_fault(void) {
-    volatile unsigned int* invalid = (volatile unsigned int*)0x00000000U;
+    volatile unsigned int* invalid =
+        (volatile unsigned int*)0x00000000U;
 
     *invalid = 0xDEADBEEFU;
 }
