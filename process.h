@@ -3,12 +3,15 @@
 
 #define PROCESS_MAX 8
 #define PROCESS_NAME_MAX 16
+#define PROCESS_FD_MAX 8
 
 #define PROCESS_UNUSED     0
 #define PROCESS_RUNNABLE   1
 #define PROCESS_TERMINATED 2
 
 #define USER_STACK_TOP  0x80400000U
+
+struct vfs_file;
 
 struct process {
     unsigned int pid;
@@ -24,6 +27,7 @@ struct process {
     unsigned int saved_esp;
 
     int started;
+    struct vfs_file* files[PROCESS_FD_MAX];
     char name[PROCESS_NAME_MAX];
 };
 
@@ -36,6 +40,11 @@ unsigned int scheduler_on_syscall(unsigned int* interrupt_stack);
 int scheduler_current_pid(void);
 unsigned int scheduler_current_entry(void);
 unsigned int scheduler_current_stack_top(void);
+unsigned int scheduler_current_cr3(void);
+
+int process_fd_install(struct vfs_file* file);
+struct vfs_file* process_fd_get(int fd);
+int process_fd_close(int fd);
 
 int process_sbrk(unsigned int increment, unsigned int* old_break);
 int process_exit_current(void);
