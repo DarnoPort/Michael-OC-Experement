@@ -2,13 +2,31 @@
 
 Учебная 32-битная x86 ОС.
 
-## Текущий этап — Phase 13
+## Текущий этап — Phase 14
 
-На этом этапе NanoOS получает первую файловую подсистему: VFS поверх RAMFS.
+На этом этапе NanoOS получает настоящее блочное хранилище и первую persistent filesystem.
 
-Это полностью оперативная файловая система. Она существует только до перезагрузки и не использует диск.
+Phase 13 давала VFS поверх RAMFS, поэтому файлы существовали только до reboot. Phase 14 сохраняет ту же VFS-интерфейсную часть, но заменяет RAMFS-хранилище на простой дисковый backend DiskFS.
 
-Основные возможности:
+Основная цепочка теперь:
+
+Shell / user syscalls
+        |
+        v
+       VFS
+        |
+        v
+     DiskFS
+        |
+        v
+     ATA PIO
+        |
+        v
+   IDE disk image
+
+После перезагрузки NanoOS дерево каталогов и содержимое файлов восстанавливаются с диска.
+
+## Возможности
 
 - GRUB Multiboot
 - flat GDT
@@ -39,56 +57,102 @@
 - page permissions из ELF PF_* после загрузки
 - user heap через SYS_SBRK
 - VFS
-- RAMFS
-- дерево каталогов и файлов в памяти
-- динамически расширяемое содержимое файлов
+- persistent DiskFS
+- ATA PIO IDE block driver
+- дерево каталогов и файлов на диске
 - file handles и offsets
 - per-process file descriptor table
 - файловые syscalls
 - shell file manager
 
-## Архитектура файловой системы
+## Phase 14: DiskFS
 
-Shell / user syscalls
-        |
-        v
-       VFS
-        |
-        v
-      RAMFS
-        |
-        v
-   kernel malloc()
+DiskFS — специально маленькая файловая система для NanoOS.
 
-RAMFS хранит дерево:
+Она не пытается быть FAT/ext2/Unix FS. Её задача — дать ОС настоящий persistent block-storage слой, на котором можно продолжать строить более высокие уровни.
 
-/
-├── directory/
-│   └── file.txt
-└── another.txt
+### Диск
 
-Каждый vfs_node знает:
+Makefile создаёт файл:
 
-- имя;
-- тип FILE или DIR;
-- размер;
-- выделенную ёмкость;
-- указатель на данные файла;
-- parent;
-- first child;
-- next sibling;
-- количество открытых handles.
+nanoos.disk
 
-Ограничения:
+Размер:
 
-128 nodes
-8 shell file descriptors
-8 file descriptors на каждый user process
-65536 bytes на один файл
+16 MiB
+
+На первом запуске DiskFS видит пустой образ и автоматически форматирует его.
+
+На следующих запусках тот же образ монтируется, поэтому файлы остаются.
+
+Чтобы полностью начать с чистого диска:
+
+make disk-reset
+
+После этого следующий запуск снова создаст новый пустой образ.
+
+### Разметка диска
+
+Sector 0:
+superblock
+
+Sectors 1–16:
+inode table
+
+Sectors 17–24:
+data-sector bitmap
+
+Sector 25+:
+file data
+
+Размер сектора:
+512 bytes
+
+DiskFS использует LBA28 ATA PIO, чего более чем достаточно для текущего 16 MiB образа.
+
+## Inodes
+
+Всего:
+
+128 inodes
+
+Каждый inode хранит:
+
+- used
+- type
+- size
+- первый сектор данных
+- количество секторов
+- parent inode
+- имя файла/каталога
+
+Каталоги не содержат отдельного списка directory entries. Иерархия восстанавливается через parent inode.
+
+Это сознательно простой дизайн: VFS всё равно строит нормальное дерево объектов в памяти после загрузки.
+
+## Ограничения текущего DiskFS
+
+- максимум 128 inodes;
+- максимальный размер одного файла — 64 KiB;
+- один файл занимает непрерывный диапазон дисковых секторов;
+- максимум 16 MiB используемого дискового образа;
+- нет journaling;
+- нет fsck/recovery;
+- нет прав доступа файлов;
+- нет timestamp;
+- нет symbolic links;
+- нет hard links;
+- нет multi-user storage;
+- ATA driver сейчас рассчитан на primary IDE master;
+- DiskFS использует простое copy-on-write обновление файла.
+
+Последний пункт важен: при записи новый набор секторов сначала выделяется и заполняется, затем inode переключается на новую область. Это снижает риск оставить inode указывать на частично записанные новые данные при ошибке записи.
+
+Цена простоты — возможная фрагментация и дополнительная запись на диск.
 
 ## VFS
 
-Поддерживаются:
+Публичный VFS API сохранился:
 
 vfs_init()
 vfs_lookup()
@@ -103,26 +167,38 @@ vfs_seek()
 vfs_close()
 vfs_truncate()
 
-Пути VFS сейчас должны быть абсолютными:
+Shell по-прежнему может использовать относительные пути. Внутри VFS используются абсолютные пути:
 
 /
- /test
- /test/hello.txt
+/test
+/test/hello.txt
 
-Shell добавляет к относительным путям свой текущий каталог.
-
-В путях понимаются компоненты:
+Поддерживаются:
 
 .
 ..
 
-Удаление каталога разрешено только когда он пустой.
+VFS кэширует содержимое открытого файла в памяти. Если файл уже есть на диске, его содержимое подгружается при первом обращении.
 
-Открытый файл удалить нельзя.
+Запись через vfs_write() сразу сохраняется в DiskFS. Поэтому закрытие файла не является условием сохранения данных.
 
-## Shell file manager
+## Shell
 
 Команды:
+
+help
+clear
+uptime
+ticks
+meminfo
+physinfo
+memtest
+paging
+vmtest
+pfault
+ps
+usertest
+diskinfo
 
 pwd
 ls [path]
@@ -137,7 +213,22 @@ close <fd>
 rm <path>
 fstest
 
+### diskinfo
+
+Показывает:
+
+- общее количество секторов DiskFS;
+- свободные data sectors;
+- занятые inodes.
+
 Пример:
+
+> diskinfo
+DiskFS sectors: 32768
+Free data sectors: ...
+Used inodes: ...
+
+### Пример
 
 > mkdir test
 > cd test
@@ -147,87 +238,27 @@ fstest
 [FILE] hello.txt  13 bytes
 > cat hello.txt
 Hello NanoOS!
-> open hello.txt
-fd = 0
-> read 0
-Hello NanoOS!
-> close 0
 
-write перезаписывает файл целиком.
+Теперь можно выйти из QEMU:
 
-open открывает существующий файл для чтения и записи.
+Ctrl+C
 
-read использует текущий offset file handle.
+или закрыть окно QEMU, затем снова:
 
-rm удаляет файл или пустой каталог.
+make run
 
-## RAMFS
+и проверить:
 
-Файлы не существуют после reboot:
+> cd /test
+> cat hello.txt
 
-boot
-  ↓
-vfs_init()
-  ↓
-создаётся новый /
-  ↓
-старые файлы отсутствуют
+Файл должен остаться.
 
-Это намеренно.
-
-Сейчас задача RAMFS — дать NanoOS нормальную абстракцию файловой системы до появления настоящего диска.
-
-Позже RAMFS можно заменить другим backend, не меняя VFS.
-
-## File descriptors и syscalls
-
-В каждом user process есть собственная таблица:
-
-fd 0
-fd 1
-...
-fd 7
-
-Она хранит указатели на kernel-side vfs_file.
-
-Добавлены syscalls:
-
-| ID | Назначение |
-|----|------------|
-| 0 | SYS_EXIT |
-| 1 | SYS_WRITE — вывод в терминал |
-| 2 | SYS_GETPID |
-| 3 | SYS_YIELD |
-| 4 | SYS_SBRK |
-| 5 | SYS_OPEN |
-| 6 | SYS_FILE_READ |
-| 7 | SYS_FILE_WRITE |
-| 8 | SYS_CLOSE |
-
-SYS_OPEN получает пользовательский указатель на абсолютный путь и флаги.
-
-SYS_FILE_READ безопасно копирует данные из VFS через kernel buffer в user memory.
-
-SYS_FILE_WRITE сначала безопасно читает user buffer через paging API, затем передаёт его VFS.
-
-Размер одной операции файлового syscall ограничен 4096 байтами.
-
-Команда usertest теперь дополнительно проверяет файлы /worker1.txt и /worker2.txt, созданные самими Ring 3 процессами через SYS_OPEN, SYS_FILE_WRITE, SYS_FILE_READ и SYS_CLOSE. Эти файлы остаются в RAMFS после завершения процессов.
-
-Добавлена операция:
-
-paging_read_user_memory()
-
-Она симметрична существующей записи в user memory и нужна для безопасной передачи данных из Ring 3 в kernel.
-
-## Проверка
-
-Для внутреннего теста:
+### Проверка FS
 
 > fstest
-fstest: PASS (RAMFS mkdir/create/open/write/read/close)
 
-Тест проверяет полный путь:
+Проверяет:
 
 mkdir
   ↓
@@ -243,27 +274,79 @@ read
   ↓
 close
 
-Для ручной проверки:
+Теперь этот тест работает уже через DiskFS, а не через RAMFS.
 
-> mkdir test
-> cd test
-> touch hello.txt
-> write hello.txt "Hello NanoOS!"
-> ls
-> cat hello.txt
-> open hello.txt
-> read 0
-> close 0
-> cd ..
-> rm test/hello.txt
-> rm test
+## Ring 3
 
-## Что пока намеренно не реализовано
+User-процессы используют:
+
+| ID | Назначение |
+|----|------------|
+| 0 | SYS_EXIT |
+| 1 | SYS_WRITE |
+| 2 | SYS_GETPID |
+| 3 | SYS_YIELD |
+| 4 | SYS_SBRK |
+| 5 | SYS_OPEN |
+| 6 | SYS_FILE_READ |
+| 7 | SYS_FILE_WRITE |
+| 8 | SYS_CLOSE |
+
+Команда:
+
+> usertest
+
+создаёт два Ring 3 процесса.
+
+Они:
+
+1. выделяют user heap;
+2. получают PID;
+3. создают /worker1.txt и /worker2.txt;
+4. записывают туда PID;
+5. закрывают файлы;
+6. снова открывают их;
+7. читают данные через SYS_FILE_READ;
+8. проверяют содержимое;
+9. завершаются.
+
+После завершения процессов файлы остаются на диске.
+
+Поэтому Phase 14 впервые связывает сразу несколько подсистем:
+
+Ring 3
+  ↓
+syscalls
+  ↓
+VFS
+  ↓
+DiskFS
+  ↓
+ATA PIO
+  ↓
+диск
+
+## Сборка
+
+Полная сборка:
+
+make clean
+make
+make iso
+make run
+
+Проверка Multiboot kernel image:
+
+make check
+
+Создание диска выполняется автоматически при make run.
+
+Если файл nanoos.disk уже существует, он не перезаписывается.
+
+## Что пока не реализовано
 
 У NanoOS всё ещё нет:
 
-- дискового драйвера;
-- persistent filesystem;
 - программ, загружаемых с диска;
 - fork/exec;
 - IPC;
@@ -272,38 +355,18 @@ close
 - динамического линкера;
 - shared libraries;
 - настоящего terminal device;
+- device filesystem;
+- pipes;
+- нормальной файловой модели Unix;
 - графической подсистемы.
 
-## Сборка в Ubuntu
+## Дальнейшая архитектура
 
-make clean
-make
-make iso
-make run
-
-Для проверки только kernel image:
-
-make check
-
-Сгенерированные .o, .elf, .bin и .iso не хранятся в Git.
-
-## Следующая логическая ступень
-
-Архитектура теперь выглядит так:
-
-VFS
- |
- +-- RAMFS
- |
- +-- future disk filesystem
-
-Следующая крупная задача — драйвер блочного устройства и persistent filesystem, который сможет сохранять файлы после перезагрузки.
-
-После этого становится реалистичным путь:
+Теперь путь к запуску программ с диска становится реальным:
 
 /bin/test.elf
       ↓
-filesystem
+DiskFS
       ↓
 VFS
       ↓
@@ -313,4 +376,30 @@ new process
       ↓
 Ring 3
 
-То есть Phase 13 — фундамент для настоящего хранения программ, а не просто демонстрация kernel API.
+Это уже следующая логическая большая ступень.
+
+Phase 14 прежде всего добавляет физическое хранение данных.
+
+После неё можно отдельно заниматься:
+
+- загрузкой ELF непосредственно из VFS;
+- exec();
+- созданием процессов из файлов;
+- нормальным shell для запуска программ;
+- более серьёзной файловой системой;
+- устройствами как файлами;
+- blocked processes и sleep();
+- развитием текстового terminal UI.
+
+## Toolchain
+
+Проект рассчитан на Ubuntu/WSL с:
+
+- gcc multilib;
+- nasm;
+- binutils/ld;
+- grub-file;
+- grub-mkrescue;
+- qemu-system-i386.
+
+Сгенерированные .o, .elf, .bin, .iso и nanoos.disk не хранятся в Git.
