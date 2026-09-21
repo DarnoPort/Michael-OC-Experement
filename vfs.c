@@ -1,14 +1,13 @@
 #include "vfs.h"
 #include "memory.h"
-
-extern void print_char(char c, unsigned char color);
-extern void print_string(const char* str, unsigned char color);
+#include "diskfs.h"
 
 struct vfs_node {
     char name[VFS_NAME_MAX];
     unsigned int type;
     unsigned int size;
     unsigned int capacity;
+    unsigned int inode;
     unsigned char* data;
 
     struct vfs_node* parent;
@@ -43,7 +42,9 @@ static unsigned int irq_save_vfs(void) {
     return flags;
 }
 
-static void irq_restore_vfs(unsigned int flags) {
+static void irq_restore_vfs(
+    unsigned int flags
+) {
     __asm__ __volatile__(
         "pushl %0\n"
         "popfl"
@@ -53,7 +54,9 @@ static void irq_restore_vfs(unsigned int flags) {
     );
 }
 
-static unsigned int string_length(const char* value) {
+static unsigned int string_length(
+    const char* value
+) {
     unsigned int length = 0;
 
     if (!value) {
@@ -76,9 +79,9 @@ static void copy_name(
     const char* source,
     unsigned int length
 ) {
-    unsigned int i;
-
-    for (i = 0; i < length; i++) {
+    for (unsigned int i = 0;
+         i < length;
+         i++) {
         destination[i] = source[i];
     }
 
@@ -89,7 +92,8 @@ static int component_is_dot(
     const char* component,
     unsigned int length
 ) {
-    return length == 1U && component[0] == '.';
+    return length == 1U &&
+           component[0] == '.';
 }
 
 static int component_is_dotdot(
@@ -106,17 +110,19 @@ static struct vfs_node* find_child(
     const char* name,
     unsigned int length
 ) {
-    struct vfs_node* child = directory->first_child;
+    struct vfs_node* child =
+        directory->first_child;
 
     while (child) {
         unsigned int child_length =
             string_length(child->name);
 
         if (child_length == length) {
-            unsigned int i;
             int equal = 1;
 
-            for (i = 0; i < length; i++) {
+            for (unsigned int i = 0;
+                 i < length;
+                 i++) {
                 if (child->name[i] != name[i]) {
                     equal = 0;
                     break;
@@ -178,13 +184,17 @@ static int parse_component(
     return 1;
 }
 
-struct vfs_node* vfs_lookup(const char* path) {
+struct vfs_node* vfs_lookup(
+    const char* path
+) {
     struct vfs_node* current;
     char component[VFS_NAME_MAX];
     unsigned int position = 0;
     unsigned int length;
 
-    if (!vfs_ready || !path || path[0] != '/') {
+    if (!vfs_ready ||
+        !path ||
+        path[0] != '/') {
         return 0;
     }
 
@@ -204,11 +214,17 @@ struct vfs_node* vfs_lookup(const char* path) {
             return current;
         }
 
-        if (component_is_dot(component, length)) {
+        if (component_is_dot(
+                component,
+                length
+            )) {
             continue;
         }
 
-        if (component_is_dotdot(component, length)) {
+        if (component_is_dotdot(
+                component,
+                length
+            )) {
             if (current->parent) {
                 current = current->parent;
             }
@@ -238,9 +254,8 @@ static int resolve_parent(
 ) {
     unsigned int path_length;
     unsigned int slash = 0;
-    unsigned int i;
-    char parent_path[VFS_PATH_MAX];
     unsigned int name_length;
+    char parent_path[VFS_PATH_MAX];
 
     if (!path ||
         path[0] != '/' ||
@@ -249,7 +264,8 @@ static int resolve_parent(
         return 0;
     }
 
-    path_length = string_length(path);
+    path_length =
+        string_length(path);
 
     if (path_length == 0 ||
         path_length >= VFS_PATH_MAX ||
@@ -257,7 +273,9 @@ static int resolve_parent(
         return 0;
     }
 
-    for (i = 0; i < path_length; i++) {
+    for (unsigned int i = 0;
+         i < path_length;
+         i++) {
         if (path[i] == '/') {
             slash = i;
         }
@@ -275,14 +293,17 @@ static int resolve_parent(
         parent_path[0] = '/';
         parent_path[1] = '\0';
     } else {
-        for (i = 0; i < slash; i++) {
+        for (unsigned int i = 0;
+             i < slash;
+             i++) {
             parent_path[i] = path[i];
         }
 
         parent_path[slash] = '\0';
     }
 
-    *parent = vfs_lookup(parent_path);
+    *parent =
+        vfs_lookup(parent_path);
 
     if (!*parent ||
         (*parent)->type != VFS_NODE_DIR) {
@@ -309,6 +330,353 @@ static int resolve_parent(
     return 1;
 }
 
+static struct vfs_node* allocate_node(
+    unsigned int inode,
+    unsigned int type,
+    const char* name,
+    unsigned int size,
+    struct vfs_node* parent
+) {
+    struct vfs_node* node;
+    unsigned int name_length;
+
+    if (!name ||
+        node_count >= VFS_MAX_NODES ||
+        (type != VFS_NODE_FILE &&
+         type != VFS_NODE_DIR)) {
+        return 0;
+    }
+
+    name_length =
+        string_length(name);
+
+    if (name_length == 0 ||
+        name_length >= VFS_NAME_MAX) {
+        return 0;
+    }
+
+    node =
+        (struct vfs_node*)malloc(
+            sizeof(struct vfs_node)
+        );
+
+    if (!node) {
+        return 0;
+    }
+
+    for (unsigned int i = 0;
+         i < sizeof(struct vfs_node);
+         i++) {
+        ((unsigned char*)node)[i] = 0;
+    }
+
+    copy_name(
+        node->name,
+        name,
+        name_length
+    );
+
+    node->type = type;
+    node->size = size;
+    node->capacity = 0;
+    node->inode = inode;
+    node->parent = parent;
+
+    node_count++;
+    return node;
+}
+
+static void destroy_node_only(
+    struct vfs_node* node
+) {
+    if (!node) {
+        return;
+    }
+
+    if (node->data) {
+        free(node->data);
+    }
+
+    free(node);
+
+    if (node_count > 0) {
+        node_count--;
+    }
+}
+
+static void unlink_node(
+    struct vfs_node* node
+) {
+    struct vfs_node* parent;
+    struct vfs_node* current;
+    struct vfs_node* previous = 0;
+
+    if (!node ||
+        !node->parent) {
+        return;
+    }
+
+    parent = node->parent;
+    current = parent->first_child;
+
+    while (current) {
+        if (current == node) {
+            if (previous) {
+                previous->next_sibling =
+                    current->next_sibling;
+            } else {
+                parent->first_child =
+                    current->next_sibling;
+            }
+            return;
+        }
+
+        previous = current;
+        current = current->next_sibling;
+    }
+}
+
+static int load_disk_tree(void) {
+    struct vfs_node* map[VFS_MAX_NODES];
+    struct diskfs_inode_info info;
+
+    for (unsigned int i = 0;
+         i < VFS_MAX_NODES;
+         i++) {
+        map[i] = 0;
+    }
+
+    map[0] = &root_node;
+
+    for (unsigned int inode = 1;
+         inode < VFS_MAX_NODES;
+         inode++) {
+        struct vfs_node* node;
+
+        if (!diskfs_get_inode(
+                inode,
+                &info
+            )) {
+            return 0;
+        }
+
+        if (!info.used) {
+            continue;
+        }
+
+        if ((info.type != VFS_NODE_FILE &&
+             info.type != VFS_NODE_DIR) ||
+            info.parent >= VFS_MAX_NODES ||
+            info.size > VFS_MAX_FILE_SIZE) {
+            return 0;
+        }
+
+        if (info.name[0] == '\0') {
+            return 0;
+        }
+
+        node =
+            allocate_node(
+                inode,
+                info.type,
+                info.name,
+                info.size,
+                0
+            );
+
+        if (!node) {
+            return 0;
+        }
+
+        map[inode] = node;
+    }
+
+    for (unsigned int inode = 1;
+         inode < VFS_MAX_NODES;
+         inode++) {
+        if (!map[inode]) {
+            continue;
+        }
+
+        if (!diskfs_get_inode(
+                inode,
+                &info
+            ) ||
+            !map[info.parent] ||
+            !vfs_node_is_directory(
+                map[info.parent]
+            ) ||
+            info.parent == inode) {
+            return 0;
+        }
+
+        map[inode]->parent =
+            map[info.parent];
+
+        map[inode]->next_sibling =
+            map[info.parent]->first_child;
+
+        map[info.parent]->first_child =
+            map[inode];
+    }
+
+    return 1;
+}
+
+int vfs_init(void) {
+    unsigned int flags;
+
+    flags = irq_save_vfs();
+
+    for (unsigned int i = 0;
+         i < sizeof(root_node);
+         i++) {
+        ((unsigned char*)&root_node)[i] = 0;
+    }
+
+    node_count = 1;
+    vfs_ready = 0;
+
+    if (!diskfs_init()) {
+        irq_restore_vfs(flags);
+        return 0;
+    }
+
+    root_node.name[0] = '/';
+    root_node.name[1] = '\0';
+    root_node.type = VFS_NODE_DIR;
+    root_node.inode = 0;
+
+    vfs_ready = 1;
+
+    if (!load_disk_tree()) {
+        vfs_ready = 0;
+        irq_restore_vfs(flags);
+        return 0;
+    }
+
+    irq_restore_vfs(flags);
+    return 1;
+}
+
+struct vfs_node* vfs_root(void) {
+    return vfs_ready
+        ? &root_node
+        : 0;
+}
+
+int vfs_node_is_directory(
+    const struct vfs_node* node
+) {
+    return node &&
+           node->type == VFS_NODE_DIR;
+}
+
+unsigned int vfs_node_size(
+    const struct vfs_node* node
+) {
+    return node ? node->size : 0;
+}
+
+const char* vfs_node_name(
+    const struct vfs_node* node
+) {
+    return node
+        ? node->name
+        : "";
+}
+
+struct vfs_node* vfs_node_parent(
+    const struct vfs_node* node
+) {
+    return node ? node->parent : 0;
+}
+
+struct vfs_node* vfs_node_first_child(
+    const struct vfs_node* node
+) {
+    return node
+        ? node->first_child
+        : 0;
+}
+
+struct vfs_node* vfs_node_next_sibling(
+    const struct vfs_node* node
+) {
+    return node
+        ? node->next_sibling
+        : 0;
+}
+
+int vfs_get_path(
+    const struct vfs_node* node,
+    char* buffer,
+    unsigned int buffer_size
+) {
+    const struct vfs_node* current;
+    const struct vfs_node* stack[VFS_MAX_NODES];
+    unsigned int depth = 0;
+    unsigned int position = 0;
+
+    if (!vfs_ready ||
+        !node ||
+        !buffer ||
+        buffer_size < 2U) {
+        return 0;
+    }
+
+    current = node;
+
+    while (current &&
+           current != &root_node) {
+        if (depth >= VFS_MAX_NODES) {
+            return 0;
+        }
+
+        stack[depth++] = current;
+        current = current->parent;
+    }
+
+    if (!current) {
+        return 0;
+    }
+
+    buffer[position++] = '/';
+
+    for (unsigned int i = depth;
+         i > 0;
+         i--) {
+        const char* name =
+            stack[i - 1U]->name;
+        unsigned int length =
+            string_length(name);
+
+        if (position + length +
+            (i > 1U ? 1U : 0U) >=
+            buffer_size) {
+            return 0;
+        }
+
+        for (unsigned int j = 0;
+             j < length;
+             j++) {
+            buffer[position++] =
+                name[j];
+        }
+
+        if (i > 1U) {
+            buffer[position++] = '/';
+        }
+    }
+
+    if (position >= buffer_size) {
+        return 0;
+    }
+
+    buffer[position] = '\0';
+    return 1;
+}
+
 static struct vfs_node* create_node(
     const char* path,
     unsigned int type
@@ -316,6 +684,7 @@ static struct vfs_node* create_node(
     struct vfs_node* parent;
     struct vfs_node* node;
     char name[VFS_NAME_MAX];
+    unsigned int inode;
     unsigned int flags;
 
     if (node_count >= VFS_MAX_NODES ||
@@ -344,186 +713,64 @@ static struct vfs_node* create_node(
         return 0;
     }
 
-    node =
-        (struct vfs_node*)malloc(
-            sizeof(struct vfs_node)
-        );
-
-    if (!node) {
+    if (!diskfs_create_node(
+            parent->inode,
+            type == VFS_NODE_FILE
+                ? DISKFS_NODE_FILE
+                : DISKFS_NODE_DIR,
+            name,
+            &inode
+        )) {
         irq_restore_vfs(flags);
         return 0;
     }
 
-    for (unsigned int i = 0;
-         i < sizeof(struct vfs_node);
-         i++) {
-        ((unsigned char*)node)[i] = 0;
-    }
-
-    {
-        unsigned int name_length =
-            string_length(name);
-
-        copy_name(
-            node->name,
+    node =
+        allocate_node(
+            inode,
+            type,
             name,
-            name_length
+            0,
+            parent
         );
-    }
 
-    node->type = type;
-    node->parent = parent;
+    if (!node) {
+        (void)diskfs_remove_node(inode);
+        irq_restore_vfs(flags);
+        return 0;
+    }
 
     node->next_sibling =
         parent->first_child;
-    parent->first_child = node;
 
-    node_count++;
+    parent->first_child = node;
 
     irq_restore_vfs(flags);
     return node;
 }
 
-int vfs_init(void) {
-    unsigned int flags;
-
-    flags = irq_save_vfs();
-
-    for (unsigned int i = 0;
-         i < sizeof(root_node);
-         i++) {
-        ((unsigned char*)&root_node)[i] = 0;
-    }
-
-    root_node.name[0] = '/';
-    root_node.name[1] = '\0';
-    root_node.type = VFS_NODE_DIR;
-    root_node.parent = 0;
-    node_count = 1;
-    vfs_ready = 1;
-
-    irq_restore_vfs(flags);
-
-    return 1;
-}
-
-struct vfs_node* vfs_root(void) {
-    return vfs_ready ? &root_node : 0;
-}
-
-int vfs_node_is_directory(
-    const struct vfs_node* node
+int vfs_mkdir(
+    const char* path
 ) {
-    return node &&
-           node->type == VFS_NODE_DIR;
+    return create_node(
+        path,
+        VFS_NODE_DIR
+    ) != 0;
 }
 
-unsigned int vfs_node_size(
-    const struct vfs_node* node
+int vfs_create_file(
+    const char* path
 ) {
-    return node ? node->size : 0;
+    return create_node(
+        path,
+        VFS_NODE_FILE
+    ) != 0;
 }
 
-const char* vfs_node_name(
-    const struct vfs_node* node
+int vfs_remove(
+    const char* path
 ) {
-    return node ? node->name : "";
-}
-
-struct vfs_node* vfs_node_parent(
-    const struct vfs_node* node
-) {
-    return node ? node->parent : 0;
-}
-
-struct vfs_node* vfs_node_first_child(
-    const struct vfs_node* node
-) {
-    return node ? node->first_child : 0;
-}
-
-struct vfs_node* vfs_node_next_sibling(
-    const struct vfs_node* node
-) {
-    return node ? node->next_sibling : 0;
-}
-
-int vfs_get_path(
-    const struct vfs_node* node,
-    char* buffer,
-    unsigned int buffer_size
-) {
-    const struct vfs_node* current;
-    const struct vfs_node* stack[VFS_MAX_NODES];
-    unsigned int depth = 0;
-    unsigned int position = 0;
-
-    if (!vfs_ready ||
-        !node ||
-        !buffer ||
-        buffer_size < 2U) {
-        return 0;
-    }
-
-    current = node;
-
-    while (current && current != &root_node) {
-        if (depth >= VFS_MAX_NODES) {
-            return 0;
-        }
-
-        stack[depth++] = current;
-        current = current->parent;
-    }
-
-    if (!current) {
-        return 0;
-    }
-
-    buffer[position++] = '/';
-
-    for (unsigned int i = depth; i > 0; i--) {
-        const char* name =
-            stack[i - 1U]->name;
-        unsigned int length =
-            string_length(name);
-
-        if (position + length +
-            (i > 1U ? 1U : 0U) >= buffer_size) {
-            return 0;
-        }
-
-        for (unsigned int j = 0;
-             j < length;
-             j++) {
-            buffer[position++] = name[j];
-        }
-
-        if (i > 1U) {
-            buffer[position++] = '/';
-        }
-    }
-
-    if (position >= buffer_size) {
-        return 0;
-    }
-
-    buffer[position] = '\0';
-    return 1;
-}
-
-int vfs_mkdir(const char* path) {
-    return create_node(path, VFS_NODE_DIR) != 0;
-}
-
-int vfs_create_file(const char* path) {
-    return create_node(path, VFS_NODE_FILE) != 0;
-}
-
-int vfs_remove(const char* path) {
     struct vfs_node* node;
-    struct vfs_node* parent;
-    struct vfs_node* previous;
     unsigned int flags;
 
     if (!vfs_ready ||
@@ -538,55 +785,22 @@ int vfs_remove(const char* path) {
 
     if (!node ||
         node == &root_node ||
-        node->open_count != 0) {
+        node->open_count != 0 ||
+        (node->type == VFS_NODE_DIR &&
+         node->first_child != 0)) {
         irq_restore_vfs(flags);
         return 0;
     }
 
-    if (node->type == VFS_NODE_DIR &&
-        node->first_child != 0) {
+    if (!diskfs_remove_node(
+            node->inode
+        )) {
         irq_restore_vfs(flags);
         return 0;
     }
 
-    parent = node->parent;
-
-    if (!parent) {
-        irq_restore_vfs(flags);
-        return 0;
-    }
-
-    previous = 0;
-    {
-        struct vfs_node* current =
-            parent->first_child;
-
-        while (current) {
-            if (current == node) {
-                if (previous) {
-                    previous->next_sibling =
-                        current->next_sibling;
-                } else {
-                    parent->first_child =
-                        current->next_sibling;
-                }
-                break;
-            }
-
-            previous = current;
-            current = current->next_sibling;
-        }
-    }
-
-    if (node->data) {
-        free(node->data);
-    }
-
-    free(node);
-
-    if (node_count > 0) {
-        node_count--;
-    }
+    unlink_node(node);
+    destroy_node_only(node);
 
     irq_restore_vfs(flags);
     return 1;
@@ -608,6 +822,7 @@ static int grow_file(
     }
 
     new_capacity = node->capacity;
+
     if (new_capacity == 0) {
         new_capacity = 256U;
     }
@@ -615,7 +830,8 @@ static int grow_file(
     while (new_capacity < required) {
         if (new_capacity >
             VFS_MAX_FILE_SIZE / 2U) {
-            new_capacity = VFS_MAX_FILE_SIZE;
+            new_capacity =
+                VFS_MAX_FILE_SIZE;
             break;
         }
 
@@ -634,7 +850,8 @@ static int grow_file(
     for (unsigned int i = 0;
          i < node->size;
          i++) {
-        new_data[i] = node->data[i];
+        new_data[i] =
+            node->data[i];
     }
 
     if (node->data) {
@@ -643,6 +860,51 @@ static int grow_file(
 
     node->data = new_data;
     node->capacity = new_capacity;
+    return 1;
+}
+
+static int ensure_file_data(
+    struct vfs_node* node
+) {
+    if (!node ||
+        node->type != VFS_NODE_FILE) {
+        return 0;
+    }
+
+    if (node->size == 0) {
+        return 1;
+    }
+
+    if (node->data) {
+        return 1;
+    }
+
+    node->capacity =
+        node->size > 256U
+            ? node->size
+            : 256U;
+
+    node->data =
+        (unsigned char*)malloc(
+            node->capacity
+        );
+
+    if (!node->data) {
+        node->capacity = 0;
+        return 0;
+    }
+
+    if (!diskfs_read_file(
+            node->inode,
+            node->data,
+            node->size
+        )) {
+        free(node->data);
+        node->data = 0;
+        node->capacity = 0;
+        return 0;
+    }
+
     return 1;
 }
 
@@ -658,7 +920,10 @@ struct vfs_file* vfs_open(
     if (!vfs_ready ||
         !path ||
         path[0] != '/' ||
-        !(flags & (VFS_O_READ | VFS_O_WRITE))) {
+        !(flags & (
+            VFS_O_READ |
+            VFS_O_WRITE
+        ))) {
         return 0;
     }
 
@@ -673,6 +938,7 @@ struct vfs_file* vfs_open(
                 path,
                 VFS_NODE_FILE
             );
+
         if (node) {
             created = 1;
         }
@@ -686,6 +952,21 @@ struct vfs_file* vfs_open(
 
     if ((flags & VFS_O_TRUNC) &&
         (flags & VFS_O_WRITE)) {
+        if (!diskfs_truncate_file(
+                node->inode
+            )) {
+            if (created) {
+                (void)diskfs_remove_node(
+                    node->inode
+                );
+                unlink_node(node);
+                destroy_node_only(node);
+            }
+
+            irq_restore_vfs(irq_flags);
+            return 0;
+        }
+
         if (node->data) {
             free(node->data);
             node->data = 0;
@@ -693,6 +974,18 @@ struct vfs_file* vfs_open(
 
         node->size = 0;
         node->capacity = 0;
+    } else if (node->size > 0 &&
+               !ensure_file_data(node)) {
+        if (created) {
+            (void)diskfs_remove_node(
+                node->inode
+            );
+            unlink_node(node);
+            destroy_node_only(node);
+        }
+
+        irq_restore_vfs(irq_flags);
+        return 0;
     }
 
     file =
@@ -702,7 +995,11 @@ struct vfs_file* vfs_open(
 
     if (!file) {
         if (created) {
-            vfs_remove(path);
+            (void)diskfs_remove_node(
+                node->inode
+            );
+            unlink_node(node);
+            destroy_node_only(node);
         }
 
         irq_restore_vfs(irq_flags);
@@ -712,7 +1009,10 @@ struct vfs_file* vfs_open(
     file->node = node;
     file->offset = 0;
     file->flags =
-        flags & (VFS_O_READ | VFS_O_WRITE);
+        flags & (
+            VFS_O_READ |
+            VFS_O_WRITE
+        );
 
     node->open_count++;
 
@@ -720,10 +1020,13 @@ struct vfs_file* vfs_open(
     return file;
 }
 
-int vfs_close(struct vfs_file* file) {
+int vfs_close(
+    struct vfs_file* file
+) {
     unsigned int flags;
 
-    if (!file || !file->node) {
+    if (!file ||
+        !file->node) {
         return 0;
     }
 
@@ -731,6 +1034,13 @@ int vfs_close(struct vfs_file* file) {
 
     if (file->node->open_count > 0) {
         file->node->open_count--;
+    }
+
+    if (file->node->open_count == 0 &&
+        file->node->data) {
+        free(file->node->data);
+        file->node->data = 0;
+        file->node->capacity = 0;
     }
 
     free(file);
@@ -761,9 +1071,17 @@ int vfs_read(
 
     flags = irq_save_vfs();
 
-    if (file->offset >= file->node->size) {
+    if (file->offset >=
+        file->node->size) {
         irq_restore_vfs(flags);
         return 0;
+    }
+
+    if (!ensure_file_data(
+            file->node
+        )) {
+        irq_restore_vfs(flags);
+        return -1;
     }
 
     available =
@@ -795,6 +1113,8 @@ int vfs_write(
     unsigned int length
 ) {
     unsigned int required;
+    unsigned int old_size;
+    unsigned int old_offset;
     unsigned int flags;
 
     if (!file ||
@@ -812,19 +1132,28 @@ int vfs_write(
     if (file->offset >
         VFS_MAX_FILE_SIZE ||
         length >
-        VFS_MAX_FILE_SIZE - file->offset) {
+        VFS_MAX_FILE_SIZE -
+            file->offset) {
         return -1;
     }
-
-    required =
-        file->offset + length;
 
     flags = irq_save_vfs();
 
-    if (!grow_file(file->node, required)) {
+    if (!ensure_file_data(
+            file->node
+        ) ||
+        !grow_file(
+            file->node,
+            file->offset + length
+        )) {
         irq_restore_vfs(flags);
         return -1;
     }
+
+    old_size = file->node->size;
+    old_offset = file->offset;
+    required =
+        file->offset + length;
 
     for (unsigned int i = 0;
          i < length;
@@ -835,11 +1164,23 @@ int vfs_write(
             ((const unsigned char*)buffer)[i];
     }
 
-    file->offset += length;
-
-    if (file->offset > file->node->size) {
-        file->node->size = file->offset;
+    if (required > file->node->size) {
+        file->node->size = required;
     }
+
+    if (!diskfs_store_file(
+            file->node->inode,
+            file->node->data,
+            file->node->size
+        )) {
+        file->node->size = old_size;
+        file->offset = old_offset;
+        irq_restore_vfs(flags);
+        return -1;
+    }
+
+    file->offset =
+        old_offset + length;
 
     irq_restore_vfs(flags);
     return (int)length;
@@ -863,10 +1204,14 @@ int vfs_seek(
 unsigned int vfs_file_offset(
     const struct vfs_file* file
 ) {
-    return file ? file->offset : 0;
+    return file
+        ? file->offset
+        : 0;
 }
 
-int vfs_truncate(struct vfs_file* file) {
+int vfs_truncate(
+    struct vfs_file* file
+) {
     unsigned int flags;
 
     if (!file ||
@@ -877,6 +1222,13 @@ int vfs_truncate(struct vfs_file* file) {
     }
 
     flags = irq_save_vfs();
+
+    if (!diskfs_truncate_file(
+            file->node->inode
+        )) {
+        irq_restore_vfs(flags);
+        return 0;
+    }
 
     if (file->node->data) {
         free(file->node->data);
