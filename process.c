@@ -126,7 +126,7 @@ static void build_initial_context(
      * The lowest address must contain EDI because popad runs first.
      */
     *--stack = USER_DATA_SELECTOR; /* SS */
-    *--stack = process->user_stack_top; /* ESP */
+    *--stack = process->initial_user_esp; /* ESP */
     *--stack = 0x202U; /* EFLAGS, IF=1 */
     *--stack = USER_CODE_SELECTOR; /* CS */
     *--stack = process->entry_point; /* EIP */
@@ -145,6 +145,159 @@ static void build_initial_context(
     process->started = 0;
 }
 
+static unsigned int bounded_string_length(
+    const char* text,
+    unsigned int maximum
+) {
+    unsigned int length = 0;
+
+    if (!text) {
+        return 0;
+    }
+
+    while (length < maximum &&
+           text[length] != '\0') {
+        length++;
+    }
+
+    return length;
+}
+
+static int process_setup_arguments(
+    struct process* process,
+    unsigned int argc,
+    const char* const* argv
+) {
+    unsigned int argument_addresses[PROCESS_ARG_MAX];
+    unsigned int stack_pointer;
+    unsigned int argv_address;
+    unsigned int vector_size;
+
+    if (!process ||
+        argc == 0U ||
+        argc > PROCESS_ARG_MAX ||
+        !argv) {
+        return 0;
+    }
+
+    stack_pointer = USER_STACK_TOP;
+
+    /*
+     * Copy argument strings downward from the top of the
+     * single user stack page. Keeping argv strings inside
+     * the stack page makes their lifetime identical to the
+     * process stack itself.
+     */
+    for (unsigned int i = argc;
+         i > 0U;
+         i--) {
+        const char* argument =
+            argv[i - 1U];
+        unsigned int length =
+            bounded_string_length(
+                argument,
+                PROCESS_ARG_MAX_LEN
+            );
+
+        if (!argument ||
+            length >= PROCESS_ARG_MAX_LEN) {
+            return 0;
+        }
+
+        if (stack_pointer <
+            USER_STACK_BASE + length + 1U) {
+            return 0;
+        }
+
+        stack_pointer -= length + 1U;
+
+        if (!paging_write_user_memory(
+                process->cr3,
+                stack_pointer,
+                argument,
+                length + 1U
+            )) {
+            return 0;
+        }
+
+        argument_addresses[i - 1U] =
+            stack_pointer;
+    }
+
+    stack_pointer &= ~0xFU;
+
+    vector_size =
+        (argc + 1U) * sizeof(unsigned int);
+
+    if (stack_pointer <
+        USER_STACK_BASE + vector_size + 12U) {
+        return 0;
+    }
+
+    argv_address =
+        stack_pointer - vector_size;
+
+    for (unsigned int i = 0;
+         i < argc;
+         i++) {
+        if (!paging_write_user_memory(
+                process->cr3,
+                argv_address + i * 4U,
+                &argument_addresses[i],
+                sizeof(unsigned int)
+            )) {
+            return 0;
+        }
+    }
+
+    {
+        unsigned int null_pointer = 0;
+
+        if (!paging_write_user_memory(
+                process->cr3,
+                argv_address + argc * 4U,
+                &null_pointer,
+                sizeof(unsigned int)
+            )) {
+            return 0;
+        }
+    }
+
+    stack_pointer =
+        argv_address - 12U;
+    stack_pointer &= ~0xFU;
+
+    {
+        unsigned int zero = 0;
+
+        if (!paging_write_user_memory(
+                process->cr3,
+                stack_pointer,
+                &argc,
+                sizeof(unsigned int)
+            ) ||
+            !paging_write_user_memory(
+                process->cr3,
+                stack_pointer + 4U,
+                &argv_address,
+                sizeof(unsigned int)
+            ) ||
+            !paging_write_user_memory(
+                process->cr3,
+                stack_pointer + 8U,
+                &zero,
+                sizeof(unsigned int)
+            )) {
+            return 0;
+        }
+    }
+
+    process->initial_user_esp =
+        stack_pointer;
+
+    return 1;
+}
+
 void scheduler_init(void) {
     for (int i = 0; i < PROCESS_MAX; i++) {
         processes[i].pid = 0;
@@ -152,6 +305,8 @@ void scheduler_init(void) {
         processes[i].cr3 = VM_ALLOC_FAIL;
         processes[i].entry_point = 0;
         processes[i].user_stack_top =
+            USER_STACK_TOP;
+        processes[i].initial_user_esp =
             USER_STACK_TOP;
         processes[i].user_heap_break =
             USER_HEAP_BASE;
@@ -171,10 +326,12 @@ void scheduler_init(void) {
     scheduler_active = 0;
 }
 
-int process_create_from_image(
+int process_create_from_image_with_args(
     const char* name,
     const unsigned char* image,
-    unsigned int image_size
+    unsigned int image_size,
+    unsigned int argc,
+    const char* const* argv
 ) {
     int slot = -1;
     struct process* process;
@@ -282,8 +439,30 @@ int process_create_from_image(
     process->user_stack_top =
         USER_STACK_TOP;
 
+    process->initial_user_esp =
+        USER_STACK_TOP;
+
     process->user_heap_break =
         USER_HEAP_BASE;
+
+    if (!process_setup_arguments(
+            process,
+            argc,
+            argv
+        )) {
+        paging_destroy_address_space(
+            process->cr3
+        );
+        vm_free_pages(
+            process->kernel_stack_top,
+            1
+        );
+        process->cr3 = VM_ALLOC_FAIL;
+        process->kernel_stack_top = 0;
+        process->kernel_stack_physical =
+            VM_ALLOC_FAIL;
+        return -1;
+    }
 
     for (int fd = 0; fd < PROCESS_FD_MAX; fd++) {
         process->files[fd] = 0;
@@ -301,6 +480,24 @@ int process_create_from_image(
 
     return (int)process->pid;
 }
+int process_create_from_image(
+    const char* name,
+    const unsigned char* image,
+    unsigned int image_size
+) {
+    const char* default_argv[1];
+
+    default_argv[0] = name ? name : "";
+
+    return process_create_from_image_with_args(
+        name,
+        image,
+        image_size,
+        1,
+        default_argv
+    );
+}
+
 int process_create(const char* name) {
     const unsigned char* image =
         &user_image_start;
@@ -316,23 +513,28 @@ int process_create(const char* name) {
     );
 }
 
-int process_run_image(
+int process_run_image_with_args(
     const char* name,
     const unsigned char* image,
-    unsigned int image_size
+    unsigned int image_size,
+    unsigned int argc,
+    const char* const* argv
 ) {
     int pid;
 
-    if (!image || image_size == 0U) {
+    if (!image ||
+        image_size == 0U) {
         return -1;
     }
 
     scheduler_init();
 
-    pid = process_create_from_image(
+    pid = process_create_from_image_with_args(
         name,
         image,
-        image_size
+        image_size,
+        argc,
+        argv
     );
 
     if (pid < 0) {
@@ -352,6 +554,24 @@ int process_run_image(
 
     scheduler_cleanup();
     return pid;
+}
+
+int process_run_image(
+    const char* name,
+    const unsigned char* image,
+    unsigned int image_size
+) {
+    const char* default_argv[1];
+
+    default_argv[0] = name ? name : "";
+
+    return process_run_image_with_args(
+        name,
+        image,
+        image_size,
+        1,
+        default_argv
+    );
 }
 
 
@@ -411,6 +631,8 @@ int process_exec_image(
     process->entry_point =
         candidate.entry_point;
     process->user_stack_top =
+        USER_STACK_TOP;
+    process->initial_user_esp =
         USER_STACK_TOP;
     process->user_heap_break =
         USER_HEAP_BASE;
@@ -591,7 +813,7 @@ unsigned int scheduler_current_stack_top(void) {
         return VM_ALLOC_FAIL;
     }
 
-    return processes[current_index].user_stack_top;
+    return processes[current_index].initial_user_esp;
 }
 
 unsigned int scheduler_current_cr3(void) {
@@ -838,6 +1060,8 @@ void scheduler_cleanup(void) {
         process->cr3 = VM_ALLOC_FAIL;
         process->entry_point = 0;
         process->user_stack_top =
+            USER_STACK_TOP;
+        process->initial_user_esp =
             USER_STACK_TOP;
         process->user_heap_break =
             USER_HEAP_BASE;
