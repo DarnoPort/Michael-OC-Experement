@@ -48,6 +48,8 @@ struct idt_ptr idtp;
 // Внешние функции из interrupts.asm
 extern void load_idt(unsigned int);
 extern void keyboard_handler_asm();
+extern void timer_handler_asm();
+extern void timer_handler_c();
 
 void idt_set_gate(unsigned char num, unsigned int base, unsigned short sel, unsigned char flags) {
     idt[num].base_lo = base & 0xFFFF;
@@ -67,7 +69,7 @@ void init_pic() {
     
     // Разрешаем ТОЛЬКО прерывание клавиатуры (IRQ1), остальные глушим (Masking)
     // 0xFD = 1111 1101 в двоичном коде (0 значит "включено")
-    outb(0x21, 0xFD); 
+    outb(0x21, 0xFC); 
     outb(0xA1, 0xFF);
 }
 
@@ -109,6 +111,22 @@ void keyboard_handler_c() {
     outb(0x20, 0x20);
 }
 
+
+// --- 5. PIT timer ---
+volatile unsigned int timer_ticks = 0;
+
+void timer_handler_c() {
+    timer_ticks++;
+}
+
+void init_pit(unsigned int frequency) {
+    unsigned int divisor = 1193182 / frequency;
+    if (divisor < 1) divisor = 1;
+    if (divisor > 65535) divisor = 65535;
+    outb(0x43, 0x36);
+    outb(0x40, divisor & 0xFF);
+    outb(0x40, (divisor >> 8) & 0xFF);
+}
 // --- 6. Главный цикл ---
 int strcmp(const char* s1, const char* s2) {
     while (*s1 && (*s1 == *s2)) { s1++; s2++; }
@@ -136,21 +154,39 @@ void kernel_main() {
     
     // Регистрируем наш обработчик клавиатуры на вектор 33 (IRQ1 = 32 + 1)
     // 0x08 - это селектор сегмента кода, 0x8E - флаги (Interrupt Gate)
+    idt_set_gate(32, (unsigned int)timer_handler_asm, 0x08, 0x8E);
     idt_set_gate(33, (unsigned int)keyboard_handler_asm, 0x08, 0x8E);
     
     load_idt((unsigned int)&idtp);
     init_pic();
+    init_pit(100);
     
     __asm__ __volatile__("sti"); // Включаем аппаратные прерывания (Set Interrupts)
 
-    print_string("=== NanoOS Phase 4: Interrupt-Driven ===\n", 0x0A);
-    print_string("CPU is now sleeping between keystrokes using 'hlt'.\n", 0x0E);
+    print_string("=== NanoOS Phase 6: Timer + Keyboard ===\n", 0x0A);
+    print_string("PIT timer: 100 Hz. CPU sleeps with HLT between interrupts.\n", 0x0E);
     print_string("> ", 0x0B);
 
     // Теперь у нас "умный" бесконечный цикл
     while (1) {
         if (cmd_ready) {
-            if (strcmp(cmd_buffer, "help") == 0) print_string("Commands: help, clear, sleep\n", 0x0E);
+            if (strcmp(cmd_buffer, "help") == 0) print_string("Commands: help, clear, uptime, ticks, sleep\n", 0x0E);
+            else if (strcmp(cmd_buffer, "uptime") == 0) {
+                print_string("Uptime ticks: ", 0x0E);
+                char digits[11]; int n = 0; unsigned int value = timer_ticks;
+                if (value == 0) digits[n++] = '0';
+                while (value > 0 && n < 10) { digits[n++] = '0' + (value % 10); value /= 10; }
+                while (n > 0) print_char(digits[--n], 0x0F);
+                print_string(" (100 ticks/sec)\n", 0x0E);
+            }
+            else if (strcmp(cmd_buffer, "ticks") == 0) {
+                print_string("Timer ticks: ", 0x0E);
+                char digits[11]; int n = 0; unsigned int value = timer_ticks;
+                if (value == 0) digits[n++] = '0';
+                while (value > 0 && n < 10) { digits[n++] = '0' + (value % 10); value /= 10; }
+                while (n > 0) print_char(digits[--n], 0x0F);
+                print_char('\n', 0x07);
+            }
             else if (strcmp(cmd_buffer, "clear") == 0) clear_screen();
             else if (strcmp(cmd_buffer, "sleep") == 0) print_string("Zzz... Just press a key to wake me up.\n", 0x09);
             else if (cmd_idx > 0) {
