@@ -1,8 +1,6 @@
 #include "ata.h"
 
 #define ATA_PRIMARY_DATA      0x1F0
-#define ATA_PRIMARY_ERROR     0x1F1
-#define ATA_PRIMARY_FEATURES  0x1F1
 #define ATA_PRIMARY_SECCOUNT  0x1F2
 #define ATA_PRIMARY_LBA_LOW   0x1F3
 #define ATA_PRIMARY_LBA_MID   0x1F4
@@ -102,15 +100,9 @@ static int ata_wait_ready(void) {
         unsigned char status =
             inb(ATA_PRIMARY_STATUS);
 
-        if (status == 0) {
-            return 0;
-        }
-
-        if (status & ATA_STATUS_ERR) {
-            return 0;
-        }
-
-        if (status & ATA_STATUS_DF) {
+        if (status == 0 ||
+            (status & ATA_STATUS_ERR) ||
+            (status & ATA_STATUS_DF)) {
             return 0;
         }
 
@@ -129,15 +121,9 @@ static int ata_wait_not_busy(void) {
         unsigned char status =
             inb(ATA_PRIMARY_STATUS);
 
-        if (status == 0) {
-            return 0;
-        }
-
-        if (status & ATA_STATUS_ERR) {
-            return 0;
-        }
-
-        if (status & ATA_STATUS_DF) {
+        if (status == 0 ||
+            (status & ATA_STATUS_ERR) ||
+            (status & ATA_STATUS_DF)) {
             return 0;
         }
 
@@ -157,6 +143,7 @@ static void ata_select_lba(unsigned int lba) {
             ((lba >> 24) & 0x0FU)
         )
     );
+
     ata_delay_400ns();
 }
 
@@ -168,26 +155,11 @@ int ata_init(void) {
 
     ata_select_lba(0);
 
-    outb(
-        ATA_PRIMARY_SECCOUNT,
-        0
-    );
-    outb(
-        ATA_PRIMARY_LBA_LOW,
-        0
-    );
-    outb(
-        ATA_PRIMARY_LBA_MID,
-        0
-    );
-    outb(
-        ATA_PRIMARY_LBA_HIGH,
-        0
-    );
-    outb(
-        ATA_PRIMARY_COMMAND,
-        ATA_CMD_IDENTIFY
-    );
+    outb(ATA_PRIMARY_SECCOUNT, 0);
+    outb(ATA_PRIMARY_LBA_LOW, 0);
+    outb(ATA_PRIMARY_LBA_MID, 0);
+    outb(ATA_PRIMARY_LBA_HIGH, 0);
+    outb(ATA_PRIMARY_COMMAND, ATA_CMD_IDENTIFY);
 
     status = inb(ATA_PRIMARY_STATUS);
 
@@ -201,7 +173,9 @@ int ata_init(void) {
         return 0;
     }
 
-    for (unsigned int i = 0; i < 256U; i++) {
+    for (unsigned int i = 0;
+         i < 256U;
+         i++) {
         (void)inw(ATA_PRIMARY_DATA);
     }
 
@@ -223,10 +197,7 @@ int ata_read_sector(
 
     ata_select_lba(lba);
 
-    outb(
-        ATA_PRIMARY_SECCOUNT,
-        1
-    );
+    outb(ATA_PRIMARY_SECCOUNT, 1);
     outb(
         ATA_PRIMARY_LBA_LOW,
         (unsigned char)(lba & 0xFFU)
@@ -249,14 +220,19 @@ int ata_read_sector(
         return 0;
     }
 
-    for (unsigned int i = 0; i < 256U; i++) {
+    for (unsigned int i = 0;
+         i < 256U;
+         i++) {
         unsigned short word =
             inw(ATA_PRIMARY_DATA);
 
-        ((unsigned char*)buffer)[i * 2U] =
-            (unsigned char)(word & 0xFFU);
-        ((unsigned char*)buffer)[i * 2U + 1U] =
-            (unsigned char)(word >> 8);
+        ((unsigned char*)buffer)[
+            i * 2U
+        ] = (unsigned char)(word & 0xFFU);
+
+        ((unsigned char*)buffer)[
+            i * 2U + 1U
+        ] = (unsigned char)(word >> 8);
     }
 
     if (!ata_wait_not_busy()) {
@@ -282,10 +258,7 @@ int ata_write_sector(
 
     ata_select_lba(lba);
 
-    outb(
-        ATA_PRIMARY_SECCOUNT,
-        1
-    );
+    outb(ATA_PRIMARY_SECCOUNT, 1);
     outb(
         ATA_PRIMARY_LBA_LOW,
         (unsigned char)(lba & 0xFFU)
@@ -308,13 +281,20 @@ int ata_write_sector(
         return 0;
     }
 
-    for (unsigned int i = 0; i < 256U; i++) {
+    for (unsigned int i = 0;
+         i < 256U;
+         i++) {
         unsigned short word =
             (unsigned short)(
-                ((const unsigned char*)buffer)[i * 2U] |
-                ((unsigned short)
-                    ((const unsigned char*)buffer)[i * 2U + 1U]
-                    << 8)
+                ((const unsigned char*)buffer)[
+                    i * 2U
+                ] |
+                (
+                    (unsigned short)
+                    ((const unsigned char*)buffer)[
+                        i * 2U + 1U
+                    ] << 8
+                )
             );
 
         outw(
@@ -328,20 +308,23 @@ int ata_write_sector(
         return 0;
     }
 
-    if (!ata_flush()) {
-        irq_restore_ata(flags);
-        return 0;
-    }
-
     irq_restore_ata(flags);
     return 1;
 }
 
 int ata_flush(void) {
+    unsigned int flags;
+    int result;
+
+    flags = irq_save_ata();
+
     outb(
         ATA_PRIMARY_COMMAND,
         ATA_CMD_CACHE_FLUSH
     );
 
-    return ata_wait_not_busy();
+    result = ata_wait_not_busy();
+
+    irq_restore_ata(flags);
+    return result;
 }
