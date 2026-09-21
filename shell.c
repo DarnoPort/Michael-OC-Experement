@@ -11,6 +11,8 @@ extern const unsigned char user_image_start;
 extern const unsigned char user_image_end;
 extern const unsigned char user_exec_image_start;
 extern const unsigned char user_exec_image_end;
+extern const unsigned char user_args_image_start;
+extern const unsigned char user_args_image_end;
 
 #define SHELL_FD_MAX 8
 
@@ -966,8 +968,15 @@ static void command_run(
 ) {
     const char* cursor =
         skip_spaces(args);
-    char argument[VFS_PATH_MAX];
+    char argument[PROCESS_ARG_MAX_LEN];
     char path[VFS_PATH_MAX];
+    char argv_storage[
+        PROCESS_ARG_MAX
+    ][PROCESS_ARG_MAX_LEN];
+    const char* argv[
+        PROCESS_ARG_MAX
+    ];
+    unsigned int argc = 0;
     unsigned char* image;
     unsigned int image_size;
     struct vfs_node* node;
@@ -977,14 +986,53 @@ static void command_run(
             &cursor,
             argument,
             sizeof(argument)
-        ) ||
-        *skip_spaces(cursor) != '\0' ||
-        !make_path(argument, path)) {
+        )) {
         print_error(
             "run: ",
-            "usage: run <path>"
+            "usage: run <path> [args...]"
         );
         return;
+    }
+
+    if (!make_path(argument, path)) {
+        print_error(
+            "run: ",
+            "invalid executable path."
+        );
+        return;
+    }
+
+    shell_copy(
+        argv_storage[argc],
+        argument,
+        sizeof(argv_storage[argc])
+    );
+    argv[argc] = argv_storage[argc];
+    argc++;
+
+    while (*skip_spaces(cursor) != '\0') {
+        if (argc >= PROCESS_ARG_MAX) {
+            print_error(
+                "run: ",
+                "too many arguments (maximum is 7 plus argv[0])."
+            );
+            return;
+        }
+
+        if (!next_token(
+                &cursor,
+                argv_storage[argc],
+                sizeof(argv_storage[argc])
+            )) {
+            print_error(
+                "run: ",
+                "invalid argument quoting."
+            );
+            return;
+        }
+
+        argv[argc] = argv_storage[argc];
+        argc++;
     }
 
     node = vfs_lookup(path);
@@ -1015,14 +1063,33 @@ static void command_run(
         0x0F
     );
     print_string(
-        " into Ring 3...\n",
+        " into Ring 3...",
         0x0E
     );
 
-    pid = process_run_image(
+    if (argc > 1U) {
+        print_string(
+            " with ",
+            0x07
+        );
+        print_uint(
+            argc - 1U,
+            0x0F
+        );
+        print_string(
+            " arg(s)",
+            0x07
+        );
+    }
+
+    print_char('\n', 0x07);
+
+    pid = process_run_image_with_args(
         vfs_node_name(node),
         image,
-        image_size
+        image_size,
+        argc,
+        argv
     );
 
     free(image);
@@ -1030,7 +1097,7 @@ static void command_run(
     if (pid < 0) {
         print_error(
             "run: ",
-            "ELF loading or process startup failed."
+            "ELF loading, argument setup, or process startup failed."
         );
         return;
     }
@@ -1039,12 +1106,17 @@ static void command_run(
         "[run] process ",
         0x0E
     );
-    print_uint((unsigned int)pid, 0x0F);
+    print_uint(
+        (unsigned int)pid,
+        0x0F
+    );
     print_string(
         " exited.\n",
         0x0E
     );
 }
+
+
 
 static int command_install_demo(void) {
     const unsigned char* image =
@@ -1290,6 +1362,107 @@ static int command_install_exec_test(void) {
         0x0A
     );
     print_uint(image_size, 0x0F);
+    print_string(
+        " bytes).\n",
+        0x0A
+    );
+    return 1;
+}
+
+static int command_install_args_test(void) {
+    const unsigned char* image =
+        &user_args_image_start;
+    unsigned int image_size =
+        (unsigned int)(
+            &user_args_image_end -
+            &user_args_image_start
+        );
+    struct vfs_file* file;
+    unsigned int total = 0;
+
+    if (!vfs_lookup("/bin")) {
+        if (!vfs_mkdir("/bin")) {
+            print_error(
+                "install-args-test: ",
+                "cannot create /bin."
+            );
+            return 0;
+        }
+    }
+
+    if (vfs_lookup("/bin/args-test.elf")) {
+        print_error(
+            "install-args-test: ",
+            "/bin/args-test.elf already exists."
+        );
+        return 0;
+    }
+
+    file =
+        vfs_open(
+            "/bin/args-test.elf",
+            VFS_O_WRITE |
+            VFS_O_CREATE |
+            VFS_O_TRUNC
+        );
+
+    if (!file) {
+        print_error(
+            "install-args-test: ",
+            "cannot create executable."
+        );
+        return 0;
+    }
+
+    while (total < image_size) {
+        unsigned int remaining =
+            image_size - total;
+        unsigned int chunk =
+            remaining > 4096U
+                ? 4096U
+                : remaining;
+        int written =
+            vfs_write(
+                file,
+                image + total,
+                chunk
+            );
+
+        if (written <= 0 ||
+            (unsigned int)written > chunk) {
+            vfs_close(file);
+            (void)vfs_remove("/bin/args-test.elf");
+            print_error(
+                "install-args-test: ",
+                "failed while writing executable."
+            );
+            return 0;
+        }
+
+        total += (unsigned int)written;
+
+        if ((unsigned int)written < chunk &&
+            total < image_size) {
+            vfs_close(file);
+            (void)vfs_remove("/bin/args-test.elf");
+            print_error(
+                "install-args-test: ",
+                "executable write was truncated."
+            );
+            return 0;
+        }
+    }
+
+    vfs_close(file);
+
+    print_string(
+        "Installed /bin/args-test.elf (",
+        0x0A
+    );
+    print_uint(
+        image_size,
+        0x0F
+    );
     print_string(
         " bytes).\n",
         0x0A
@@ -1554,6 +1727,16 @@ int shell_handle_command(
             &args
         )) {
         command_run(args);
+        return 1;
+    }
+
+    if (command_args(
+            command,
+            "install-args-test",
+            &args
+        ) &&
+        *skip_spaces(args) == '\0') {
+        command_install_args_test();
         return 1;
     }
 
