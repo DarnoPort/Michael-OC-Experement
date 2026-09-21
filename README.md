@@ -212,6 +212,8 @@ SYS_FILE_WRITE сначала безопасно читает user buffer чер
 
 Размер одной операции файлового syscall ограничен 4096 байтами.
 
+Команда usertest теперь дополнительно проверяет файлы /worker1.txt и /worker2.txt, созданные самими Ring 3 процессами через SYS_OPEN, SYS_FILE_WRITE, SYS_FILE_READ и SYS_CLOSE. Эти файлы остаются в RAMFS после завершения процессов.
+
 Добавлена операция:
 
 paging_read_user_memory()
