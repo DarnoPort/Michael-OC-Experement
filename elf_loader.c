@@ -171,7 +171,7 @@ static int load_segment(
 
     if (ph->p_filesz > 0) {
         const unsigned char* source =
-            user_image_start + ph->p_offset;
+            &user_image_start + ph->p_offset;
 
         if (!paging_write_user_memory(
                 process->cr3,
@@ -262,10 +262,10 @@ static int load_segment(
 }
 
 int elf_load_user_process(struct process* process) {
-    const unsigned char* image = user_image_start;
+    const unsigned char* image = &user_image_start;
     unsigned int image_size =
         (unsigned int)(
-            user_image_end - user_image_start
+            &user_image_end - &user_image_start
         );
 
     const struct elf32_header* header;
