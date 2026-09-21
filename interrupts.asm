@@ -73,10 +73,12 @@ ISR_NOERR 31
 isr_common_noerr:
     pushad
     mov eax, [esp + 32]
+    lea edx, [esp + 36]
+    push edx
     push dword 0
     push eax
     call exception_handler_c
-    add esp, 8
+    add esp, 12
     popad
     add esp, 4
     iretd
@@ -85,10 +87,12 @@ isr_common_err:
     pushad
     mov eax, [esp + 32]
     mov edx, [esp + 36]
+    lea ecx, [esp + 40]
+    push ecx
     push edx
     push eax
     call exception_handler_c
-    add esp, 8
+    add esp, 12
     popad
     add esp, 8
     iretd
