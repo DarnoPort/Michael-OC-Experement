@@ -1750,13 +1750,18 @@ int shell_handle_command(
             command,
             "rm",
             &args
+        ) ||
+        command_args(
+            command,
+            "del",
+            &args
         )) {
         char path[VFS_PATH_MAX];
 
         if (!make_path(args, path) ||
             !vfs_remove(path)) {
             print_error(
-                "rm: ",
+                "rm/del: ",
                 "remove failed; directory must be empty and file closed."
             );
         }
