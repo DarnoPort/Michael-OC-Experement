@@ -1,6 +1,6 @@
 TARGET := myos.bin
 ISO := myos.iso
-DISK := nanoos.disk
+DISK := michaelos.disk
 DISK_SIZE_MB := 16
 BUILD := build
 ISO_ROOT := $(BUILD)/isodir
@@ -82,13 +82,17 @@ iso: $(TARGET)
 	$(GRUB_RES) -o $(ISO) $(ISO_ROOT)
 
 disk:
+	@if [ ! -f "$(DISK)" ] && [ -f "nanoos.disk" ]; then \
+		echo "Migrating nanoos.disk -> $(DISK)..."; \
+		mv nanoos.disk "$(DISK)"; \
+	fi
 	@if [ ! -f "$(DISK)" ]; then \
 		echo "Creating $(DISK_SIZE_MB) MiB Michael OS disk image..."; \
-		dd if=/dev/zero of="$(DISK)" bs=1M count=$(DISK_SIZE_MB) status=none; \
+	dd if=/dev/zero of="$(DISK)" bs=1M count=$(DISK_SIZE_MB) status=none; \
 	fi
 
 disk-reset:
-	rm -f "$(DISK)"
+	rm -f "$(DISK)" nanoos.disk
 
 check: $(TARGET)
 	$(GRUB_FILE) --is-x86-multiboot $(TARGET)
