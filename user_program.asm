@@ -22,5 +22,8 @@ user_program_start:
 user_message:
     db "Hello from Ring 3! System call works."
     db 10
+
 user_message_end:
     db 0
+
+user_program_end:
