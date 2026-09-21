@@ -2,6 +2,7 @@
 #include "memory.h"
 #include "paging.h"
 #include "process.h"
+#include "vfs.h"
 
 extern void print_char(char c, unsigned char color);
 extern void print_string(const char* str, unsigned char color);
@@ -55,6 +56,41 @@ struct syscall_registers {
 };
 
 static struct tss32 tss;
+
+static int copy_user_path(
+    unsigned int directory,
+    unsigned int address,
+    char* path,
+    unsigned int path_size
+) {
+    if (!path || path_size < 2U) {
+        return 0;
+    }
+
+    for (unsigned int i = 0; i < path_size - 1U; i++) {
+        unsigned char character;
+
+        if (address > 0xFFFFFFFFU - i ||
+            !paging_read_user_memory(
+                directory,
+                address + i,
+                &character,
+                1
+            )) {
+            return 0;
+        }
+
+        path[i] = (char)character;
+
+        if (character == '\0') {
+            return 1;
+        }
+    }
+
+    path[path_size - 1U] = '\0';
+    return 0;
+}
+
 void syscall_set_kernel_stack(unsigned int stack_top) {
     tss.esp0 = stack_top;
 }
@@ -120,6 +156,208 @@ int syscall_dispatch(void* registers_ptr) {
             registers->eax = old_break;
         }
 
+        return 0;
+    }
+
+    if (registers->eax == SYS_OPEN) {
+        char path[VFS_PATH_MAX];
+        struct vfs_file* file;
+        unsigned int flags;
+        int fd;
+
+        if (!copy_user_path(
+                scheduler_current_cr3(),
+                registers->ebx,
+                path,
+                sizeof(path)
+            )) {
+            registers->eax = 0xFFFFFFFFU;
+            return 0;
+        }
+
+        flags = registers->ecx &
+            (VFS_O_READ |
+             VFS_O_WRITE |
+             VFS_O_CREATE |
+             VFS_O_TRUNC);
+
+        if (!(flags & (VFS_O_READ | VFS_O_WRITE))) {
+            registers->eax = 0xFFFFFFFFU;
+            return 0;
+        }
+
+        file = vfs_open(path, flags);
+
+        if (!file) {
+            registers->eax = 0xFFFFFFFFU;
+            return 0;
+        }
+
+        fd = process_fd_install(file);
+
+        if (fd < 0) {
+            vfs_close(file);
+            registers->eax = 0xFFFFFFFFU;
+            return 0;
+        }
+
+        registers->eax = (unsigned int)fd;
+        return 0;
+    }
+
+    if (registers->eax == SYS_FILE_READ) {
+        struct vfs_file* file =
+            process_fd_get((int)registers->ebx);
+        unsigned int directory =
+            scheduler_current_cr3();
+        unsigned int remaining =
+            registers->edx;
+        unsigned int destination =
+            registers->ecx;
+        unsigned char buffer[256];
+        unsigned int total = 0;
+
+        if (!file ||
+            remaining == 0 ||
+            remaining > 4096U ||
+            !paging_user_range_valid_in_directory(
+                directory,
+                destination,
+                remaining,
+                1
+            )) {
+            registers->eax = 0xFFFFFFFFU;
+            return 0;
+        }
+
+        while (remaining > 0) {
+            unsigned int chunk =
+                remaining > sizeof(buffer)
+                    ? sizeof(buffer)
+                    : remaining;
+            int result =
+                vfs_read(
+                    file,
+                    buffer,
+                    chunk
+                );
+
+            if (result < 0) {
+                if (total == 0) {
+                    registers->eax = 0xFFFFFFFFU;
+                } else {
+                    registers->eax = total;
+                }
+                return 0;
+            }
+
+            if (result == 0) {
+                break;
+            }
+
+            if (!paging_write_user_memory(
+                    directory,
+                    destination + total,
+                    buffer,
+                    (unsigned int)result
+                )) {
+                registers->eax =
+                    total == 0
+                        ? 0xFFFFFFFFU
+                        : total;
+                return 0;
+            }
+
+            total += (unsigned int)result;
+            remaining -= (unsigned int)result;
+
+            if ((unsigned int)result < chunk) {
+                break;
+            }
+        }
+
+        registers->eax = total;
+        return 0;
+    }
+
+    if (registers->eax == SYS_FILE_WRITE) {
+        struct vfs_file* file =
+            process_fd_get((int)registers->ebx);
+        unsigned int directory =
+            scheduler_current_cr3();
+        unsigned int remaining =
+            registers->edx;
+        unsigned int source =
+            registers->ecx;
+        unsigned char buffer[256];
+        unsigned int total = 0;
+
+        if (!file ||
+            remaining == 0 ||
+            remaining > 4096U ||
+            !paging_user_range_valid_in_directory(
+                directory,
+                source,
+                remaining,
+                0
+            )) {
+            registers->eax = 0xFFFFFFFFU;
+            return 0;
+        }
+
+        while (remaining > 0) {
+            unsigned int chunk =
+                remaining > sizeof(buffer)
+                    ? sizeof(buffer)
+                    : remaining;
+
+            if (!paging_read_user_memory(
+                    directory,
+                    source + total,
+                    buffer,
+                    chunk
+                )) {
+                registers->eax =
+                    total == 0
+                        ? 0xFFFFFFFFU
+                        : total;
+                return 0;
+            }
+
+            {
+                int result =
+                    vfs_write(
+                        file,
+                        buffer,
+                        chunk
+                    );
+
+                if (result < 0) {
+                    registers->eax =
+                        total == 0
+                            ? 0xFFFFFFFFU
+                            : total;
+                    return 0;
+                }
+
+                total += (unsigned int)result;
+                remaining -= (unsigned int)result;
+
+                if ((unsigned int)result < chunk) {
+                    break;
+                }
+            }
+        }
+
+        registers->eax = total;
+        return 0;
+    }
+
+    if (registers->eax == SYS_CLOSE) {
+        registers->eax =
+            process_fd_close((int)registers->ebx)
+                ? 0U
+                : 0xFFFFFFFFU;
         return 0;
     }
 
