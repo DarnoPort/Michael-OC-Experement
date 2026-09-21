@@ -1,4 +1,4 @@
-; NanoOS Multiboot entry point.
+; Michael OS Multiboot entry point.
 ; Phase 10/11: user mode, TSS and process scheduling.
 
 MBALIGN  equ  1 << 0
