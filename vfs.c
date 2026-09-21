@@ -886,6 +886,93 @@ int vfs_rename(
     return 1;
 }
 
+
+int vfs_move(
+    const char* old_path,
+    const char* new_path
+) {
+    struct vfs_node* node;
+    struct vfs_node* old_parent;
+    struct vfs_node* new_parent;
+    struct vfs_node* current;
+    struct vfs_node* existing;
+    char old_name[VFS_NAME_MAX];
+    char new_name[VFS_NAME_MAX];
+    unsigned int flags;
+
+    if (!vfs_ready ||
+        !old_path ||
+        !new_path ||
+        old_path[0] != '/' ||
+        new_path[0] != '/') {
+        return 0;
+    }
+
+    flags = irq_save_vfs();
+
+    node = vfs_lookup(old_path);
+
+    if (!node ||
+        node == &root_node ||
+        node->open_count != 0 ||
+        !resolve_parent(
+            old_path,
+            &old_parent,
+            old_name
+        ) ||
+        node->parent != old_parent ||
+        !resolve_parent(
+            new_path,
+            &new_parent,
+            new_name
+        ) ||
+        !new_parent ||
+        !vfs_node_is_directory(new_parent)) {
+        irq_restore_vfs(flags);
+        return 0;
+    }
+
+    existing = vfs_lookup(new_path);
+
+    if (existing) {
+        irq_restore_vfs(flags);
+        return 0;
+    }
+
+    if (node->type == VFS_NODE_DIR) {
+        current = new_parent;
+
+        while (current) {
+            if (current == node) {
+                irq_restore_vfs(flags);
+                return 0;
+            }
+
+            current = current->parent;
+        }
+    }
+
+    if (!diskfs_move_node(
+            node->inode,
+            new_parent->inode,
+            new_name
+        )) {
+        irq_restore_vfs(flags);
+        return 0;
+    }
+
+    unlink_node(node);
+
+    node->parent = new_parent;
+    node->next_sibling =
+        new_parent->first_child;
+    new_parent->first_child = node;
+
+    irq_restore_vfs(flags);
+    return 1;
+}
+
+
 static int grow_file(
     struct vfs_node* node,
     unsigned int required
