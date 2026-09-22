@@ -579,6 +579,7 @@ int diskfs_get_inode(
     info->data_start = value.data_start;
     info->data_sectors = value.data_sectors;
     info->parent = value.parent;
+    info->flags = value.reserved[0];
 
     for (unsigned int i = 0;
          i < DISKFS_NAME_MAX;
@@ -650,6 +651,34 @@ int diskfs_create_node(
     return 1;
 }
 
+
+
+int diskfs_set_flags(
+    unsigned int inode_number,
+    unsigned int flags
+) {
+    struct diskfs_inode inode;
+
+    if (!diskfs_ready ||
+        inode_number == 0 ||
+        inode_number >= DISKFS_MAX_INODES ||
+        (flags & ~DISKFS_FLAG_SUPPORTED) != 0 ||
+        !read_inode(
+            inode_number,
+            &inode
+        ) ||
+        !inode.used ||
+        inode.type != DISKFS_NODE_FILE) {
+        return 0;
+    }
+
+    inode.reserved[0] = flags;
+
+    return write_inode(
+        inode_number,
+        &inode
+    );
+}
 
 int diskfs_rename_node(
     unsigned int inode_number,
@@ -1186,7 +1215,8 @@ int diskfs_check(
             }
             if (inode.size != 0U ||
                 inode.data_start != 0U ||
-                inode.data_sectors != 0U) {
+                inode.data_sectors != 0U ||
+                inode.reserved[0] != 0U) {
                 errors++;
             }
             continue;
@@ -1196,6 +1226,8 @@ int diskfs_check(
              inode.type != DISKFS_NODE_DIR) ||
             inode.parent >= DISKFS_MAX_INODES ||
             inode.parent == i ||
+            (inode.reserved[0] & ~DISKFS_FLAG_SUPPORTED) != 0 ||
+            (inode.type == DISKFS_NODE_DIR && inode.reserved[0] != 0U) ||
             !validate_node_name(inode.name)) {
             errors++;
             continue;
