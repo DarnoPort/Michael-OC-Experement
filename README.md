@@ -2,7 +2,55 @@
 
 Учебная 32-битная x86 ОС.
 
-## Текущий этап — Phase 25.1
+## Текущий этап — Phase 25.2
+
+Phase 25.2 делает DiskFS доступным для внешних инструментов на host-машине. Теперь файлы можно импортировать в существующий `michaelos.disk` без запуска Michael OS и без встраивания файла в kernel image.
+
+Добавлен `tools/diskfs_host.py`:
+
+- импорт host-файла в DiskFS;
+- автоматическое создание отсутствующих родительских каталогов при импорте;
+- экспорт файла обратно на host;
+- просмотр содержимого каталога DiskFS;
+- атомарная запись изменённого образа;
+- сохранение существующего формата DiskFS v1;
+- поддержка перезаписи существующего файла с новой data extent.
+
+Это первый этап, на котором внешний ELF-файл действительно может стать обычной программой Michael OS.
+
+Пример:
+
+~~~text
+$ make
+$ mkdir -p external
+
+$ make disk-import FILE=build/user_program.elf DEST=/bin/external-demo.elf
+
+$ make run
+
+C:\\> fscheck
+DiskFS check: PASS
+...
+C:\\> run /bin/external-demo.elf
+~~~
+
+Здесь `build/user_program.elf` не встраивается заново в ядро: он читается host-side инструментом и записывается непосредственно в `michaelos.disk`. После загрузки ОС `run` видит его как обычный ELF-файл через VFS/DiskFS.
+
+Для просмотра:
+
+~~~text
+$ make disk-ls
+$ make disk-ls DISK_PATH=/bin
+~~~
+
+Для извлечения:
+
+~~~text
+$ make disk-export SRC=/bin/external-demo.elf FILE=exported-demo.elf
+~~~
+
+Важное ограничение текущего DiskFS сохраняется: один файл не может превышать 64 KiB и должен занимать непрерывный диапазон data sectors.
+
 
 Phase 25.1 добавляет проверку целостности DiskFS перед построением дерева VFS. Файловая система теперь сверяет inode-метаданные, parent-связи, уникальность имён, размеры файлов и bitmap выделенных data sectors.
 
@@ -45,6 +93,50 @@ Errors: 0
 `CHKDSK` является DOS-подобным псевдонимом той же проверки.
 
 VFS теперь не строит дерево из on-disk inode table, если integrity check обнаружил ошибку. Таким образом, следующие этапы смогут строить recovery и repair поверх чётко определённого слоя обнаружения повреждений.
+
+## Phase 25.2: External Files on DiskFS
+
+Phase 25.2 не меняет on-disk формат DiskFS v1. Формат суперблока, inode table и bitmap остаётся совместимым с существующим `michaelos.disk`.
+
+Host-side utility использует те же значения, что и kernel:
+
+- 512-byte sectors;
+- 32768 sectors;
+- 128 inodes;
+- 32-byte names;
+- 64 KiB maximum file size;
+- data area starting at sector 25.
+
+Для безопасности весь обновлённый 16 MiB образ записывается во временный файл, синхронизируется через `fsync()`, затем заменяется атомарно. Это касается операций host-side; сама ОС по-прежнему использует собственный DiskFS backend.
+
+Внешняя программа теперь может пройти полный путь:
+
+~~~text
+host ELF
+   |
+   v
+tools/diskfs_host.py
+   |
+   v
+michaelos.disk
+   |
+   v
+Michael OS DiskFS
+   |
+   v
+VFS
+   |
+   v
+run /path/program.elf
+   |
+   v
+ELF loader
+   |
+   v
+Ring 3
+~~~
+
+Это отделяет две вещи: создание/доставка файла выполняется host-инструментом, а загрузка и исполнение выполняет сама Michael OS.
 
 ## Phase 24.7: Terminal and Shell Tab Completion
 
@@ -1019,9 +1111,9 @@ C:\\> cd test/
 ~~~
 
 Версия проекта — `0.24.7`.
-## Версия 25.1
+## Версия 25.2
 
-Текущая версия проекта — `0.25.1`.
+Текущая версия проекта — `0.25.2`.
 
 ## Сборка
 
