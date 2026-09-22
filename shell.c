@@ -435,7 +435,7 @@ static int shell_completion_path_command(const char* command) {
     static const char* names[] = {
         "ls", "cd", "mkdir", "touch", "cat", "type",
         "copy", "ren", "rename", "move", "open",
-        "rm", "del", "run", "dir", "fscheck", "chkdsk"
+        "rm", "del", "run", "dir"
     };
     for (unsigned int i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
         if (shell_command_name_is(command, names[i])) return 1;
@@ -2894,6 +2894,21 @@ int shell_handle_command(
         ) &&
         *skip_spaces(args) == '\0') {
         command_diskinfo();
+        return 1;
+    }
+
+    if ((command_args(
+            command,
+            "fscheck",
+            &args
+        ) ||
+         command_args(
+            command,
+            "chkdsk",
+            &args
+        )) &&
+        *skip_spaces(args) == '\0') {
+        command_fscheck();
         return 1;
     }
 
