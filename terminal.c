@@ -416,9 +416,9 @@ static void redraw_input(void) {
     clear_length = TERMINAL_INPUT_MAX;
 
     /*
-     * Clear the old rendered tail as well. The extra cell after
-     * the command is the cursor cell, so shrinking a wrapped line
-     * cannot leave stale characters behind.
+     * Clear the complete editable area first. This also removes
+     * stale characters left on lower wrapped lines after deleting
+     * or replacing a previously longer command.
      */
     for (unsigned int i = 0;
          i < clear_length;
