@@ -2,7 +2,7 @@
 
 Учебная 32-битная x86 ОС.
 
-## Текущий этап — Phase 25.2
+## Текущий этап — Phase 25.3
 
 Phase 25.2 делает DiskFS доступным для внешних инструментов на host-машине. Теперь файлы можно импортировать в существующий `michaelos.disk` без запуска Michael OS и без встраивания файла в kernel image.
 
@@ -93,6 +93,43 @@ Errors: 0
 `CHKDSK` является DOS-подобным псевдонимом той же проверки.
 
 VFS теперь не строит дерево из on-disk inode table, если integrity check обнаружил ошибку. Таким образом, следующие этапы смогут строить recovery и repair поверх чётко определённого слоя обнаружения повреждений.
+
+## Phase 25.3: ELF Validation and Executable Installation
+
+Phase 25.3 добавляет отдельный путь для установки именно исполняемых программ. Host-side инструмент теперь проверяет ELF32-файл до записи в DiskFS.
+
+Проверяются:
+
+- ELF magic, 32-bit class и little-endian формат;
+- тип `ET_EXEC`;
+- архитектура `EM_386`;
+- корректность ELF header и таблицы program headers;
+- наличие хотя бы одного `PT_LOAD`;
+- границы file и memory ranges каждого `PT_LOAD`;
+- виртуальный диапазон, совместимый с текущим user address space Michael OS;
+- разрешения `R/W/X`;
+- пересечение загружаемых страниц разных сегментов;
+- попадание entry point в загружаемый сегмент;
+- ограничение DiskFS в 64 KiB.
+
+Для этого добавлены команды:
+
+~~~text
+$ make elf-check FILE=build/user_program.elf
+$ make elf-install FILE=build/user_program.elf DEST=/bin/external-demo.elf
+$ make disk-elf-check SRC=/bin/external-demo.elf
+~~~
+
+`elf-install` отличается от обычного `disk-import`: он сначала доказывает, что файл соответствует формату ELF32, который способен загрузить текущий kernel loader, и только затем помещает файл в DiskFS.
+
+Это создаёт чёткую границу:
+
+~~~text
+обычный файл  -> disk-import
+ELF-программа -> elf-install -> ELF validation -> DiskFS
+~~~
+
+Проверка уже установленной программы через `disk-elf-check` позволяет обнаружить повреждённый или неподходящий ELF ещё до запуска `run`.
 
 ## Phase 25.2: External Files on DiskFS
 
