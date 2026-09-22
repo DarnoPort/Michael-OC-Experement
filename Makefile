@@ -125,7 +125,7 @@ disk:
 disk-reset:
 	rm -f "$(DISK)" nanoos.disk
 
-disk-import: disk
+disk-import:
 	@test -n "$(FILE)" || (echo "Usage: make disk-import FILE=host_file DEST=/disk/path"; exit 1)
 	@test -n "$(DEST)" || (echo "Usage: make disk-import FILE=host_file DEST=/disk/path"; exit 1)
 	python3 tools/diskfs_host.py --disk "$(DISK)" import "$(FILE)" "$(DEST)"
