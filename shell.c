@@ -700,6 +700,11 @@ static void command_ls(const char* args) {
                     "[DIR ] ",
                     0x0B
                 );
+            } else if (vfs_node_is_executable(child)) {
+                print_string(
+                    "[EXEC] ",
+                    0x0A
+                );
             } else {
                 print_string(
                     "[FILE] ",
@@ -815,6 +820,9 @@ static void command_dir_wide(
         if (vfs_node_is_directory(child)) {
             shell_copy(option, "[DIR] ", sizeof(option));
             prefix_length = 6U;
+        } else if (vfs_node_is_executable(child)) {
+            shell_copy(option, "[EXEC] ", sizeof(option));
+            prefix_length = 7U;
         } else {
             shell_copy(option, "[FILE] ", sizeof(option));
             prefix_length = 7U;
@@ -2037,6 +2045,14 @@ static void command_run(
         return;
     }
 
+    if (!vfs_node_is_executable(node)) {
+        print_error(
+            "run: ",
+            "file is not marked executable; use elf-install for ELF programs."
+        );
+        return;
+    }
+
     if (!shell_read_file_image(
             path,
             &image,
@@ -2308,8 +2324,21 @@ static int command_install_demo(void) {
 
     vfs_close(file);
 
+    if (!vfs_set_executable(
+            "/bin/demo.elf",
+            1
+        )) {
+        (void)vfs_remove("/bin/demo.elf");
+        print_error(
+            "demo: ",
+            "cannot mark executable."
+        );
+        return 0;
+    }
+
     print_string(
-        "Installed /bin/demo.elf (",
+        "Installed /bin/demo.elf ("
+
         0x0A
     );
     print_uint(image_size, 0x0F);
@@ -2461,8 +2490,21 @@ static int command_install_exec_test(void) {
 
     vfs_close(file);
 
+    if (!vfs_set_executable(
+            "/bin/exec-test.elf",
+            1
+        )) {
+        (void)vfs_remove("/bin/exec-test.elf");
+        print_error(
+            "exec-test: ",
+            "cannot mark executable."
+        );
+        return 0;
+    }
+
     print_string(
-        "Installed /bin/exec-test.elf (",
+        "Installed /bin/exec-test.elf ("
+
         0x0A
     );
     print_uint(image_size, 0x0F);
@@ -2559,8 +2601,21 @@ static int command_install_args_test(void) {
 
     vfs_close(file);
 
+    if (!vfs_set_executable(
+            "/bin/args-test.elf",
+            1
+        )) {
+        (void)vfs_remove("/bin/args-test.elf");
+        print_error(
+            "args-test: ",
+            "cannot mark executable."
+        );
+        return 0;
+    }
+
     print_string(
-        "Installed /bin/args-test.elf (",
+        "Installed /bin/args-test.elf ("
+
         0x0A
     );
     print_uint(
