@@ -31,10 +31,30 @@ static int layout_switch_latch = 0;
 
 static unsigned char vga_font_buffer[256U * 32U];
 
+struct terminal_cell {
+    char character;
+    unsigned char color;
+};
+
+static struct terminal_cell scrollback[
+    TERMINAL_SCROLLBACK_MAX
+][TERMINAL_WIDTH];
+
+static unsigned int scrollback_count = 0;
+static unsigned int scrollback_start = 0;
+static unsigned int view_offset = 0;
+static unsigned char cursor_start_value = 0x0EU;
+
 static inline void outb(
     unsigned short port,
     unsigned char data
 );
+
+static inline unsigned char inb(
+    unsigned short port
+);
+
+static void terminal_update_cursor(void);
 
 static void terminal_install_cyrillic_font(void) {
     volatile unsigned char* font_memory =
@@ -150,8 +170,82 @@ static inline void outb(
     );
 }
 
+static inline unsigned char inb(
+    unsigned short port
+) {
+    unsigned char result;
+    __asm__ __volatile__(
+        "inb %1, %0"
+        : "=a"(result)
+        : "Nd"(port)
+    );
+    return result;
+}
+
+static void terminal_set_cursor_visible(int visible) {
+    unsigned char value =
+        visible
+            ? (unsigned char)(cursor_start_value & 0x1FU)
+            : (unsigned char)(cursor_start_value | 0x20U);
+    outb(0x3D4, 0x0A);
+    outb(0x3D5, value);
+}
+
+static void scrollback_store_row(unsigned int row) {
+    unsigned int index;
+    if (row >= TERMINAL_HEIGHT) return;
+    if (scrollback_count < TERMINAL_SCROLLBACK_MAX) {
+        index = (scrollback_start + scrollback_count) % TERMINAL_SCROLLBACK_MAX;
+        scrollback_count++;
+    } else {
+        index = scrollback_start;
+        scrollback_start = (scrollback_start + 1U) % TERMINAL_SCROLLBACK_MAX;
+    }
+    for (unsigned int col = 0; col < TERMINAL_WIDTH; col++) {
+        unsigned short cell = vga_buffer[row * TERMINAL_WIDTH + col];
+        scrollback[index][col].character = (char)(cell & 0x00FFU);
+        scrollback[index][col].color = (unsigned char)((cell >> 8) & 0x00FFU);
+    }
+}
+
+static void scrollback_render_view(void) {
+    unsigned int total_rows = scrollback_count + TERMINAL_HEIGHT;
+    unsigned int start_row;
+    if (view_offset > scrollback_count) view_offset = scrollback_count;
+    start_row = (view_offset > 0U)
+        ? total_rows - TERMINAL_HEIGHT - view_offset
+        : total_rows - TERMINAL_HEIGHT;
+    for (unsigned int screen_row = 0; screen_row < TERMINAL_HEIGHT; screen_row++) {
+        unsigned int logical_row = start_row + screen_row;
+        if (logical_row < scrollback_count) {
+            unsigned int index = (scrollback_start + logical_row) % TERMINAL_SCROLLBACK_MAX;
+            for (unsigned int col = 0; col < TERMINAL_WIDTH; col++) {
+                vga_buffer[screen_row * TERMINAL_WIDTH + col] =
+                    (unsigned short)(unsigned char)scrollback[index][col].character |
+                    ((unsigned short)scrollback[index][col].color << 8);
+            }
+        } else {
+            unsigned int current_row = logical_row - scrollback_count;
+            for (unsigned int col = 0; col < TERMINAL_WIDTH; col++) {
+                vga_buffer[screen_row * TERMINAL_WIDTH + col] =
+                    vga_buffer[current_row * TERMINAL_WIDTH + col];
+            }
+        }
+    }
+}
+
+static void terminal_follow_bottom(void) {
+    if (view_offset == 0U) return;
+    view_offset = 0;
+    scrollback_render_view();
+    terminal_set_cursor_visible(1);
+    terminal_update_cursor();
+}
+
 static void terminal_update_cursor(void) {
-    unsigned int position =
+    unsigned int position;
+    if (view_offset != 0U) return;
+    position =
         term_row * TERMINAL_WIDTH + term_col;
 
     outb(0x3D4, 0x0F);
@@ -180,6 +274,8 @@ static void clear_line(unsigned int row) {
 }
 
 static void scroll_screen(void) {
+    scrollback_store_row(0);
+
     for (unsigned int row = 1;
          row < TERMINAL_HEIGHT;
          row++) {
@@ -201,6 +297,10 @@ static void scroll_screen(void) {
 }
 
 void terminal_clear(void) {
+    scrollback_count = 0;
+    scrollback_start = 0;
+    view_offset = 0;
+
     for (unsigned int row = 0;
          row < TERMINAL_HEIGHT;
          row++) {
@@ -209,10 +309,12 @@ void terminal_clear(void) {
 
     term_row = 0;
     term_col = 0;
+    terminal_set_cursor_visible(1);
     terminal_update_cursor();
 }
 
 void print_char(char c, unsigned char color) {
+    terminal_follow_bottom();
     if ((unsigned char)c == 10U) {
         term_col = 0;
         term_row++;
@@ -387,6 +489,8 @@ static void redraw_input(void) {
     unsigned int end_row;
     unsigned int end_col;
     unsigned int clear_length;
+
+    terminal_follow_bottom();
 
     input_position_for_index(
         command_length,
@@ -905,6 +1009,40 @@ void terminal_keyboard_scancode(
             return;
         }
 
+        if (code == 0x49U) {
+            if (scrollback_count > 0U && view_offset < scrollback_count) {
+                unsigned int page = TERMINAL_HEIGHT;
+                view_offset =
+                    (view_offset + page > scrollback_count)
+                        ? scrollback_count
+                        : view_offset + page;
+                scrollback_render_view();
+                terminal_set_cursor_visible(0);
+            }
+            return;
+        }
+
+        if (code == 0x51U) {
+            if (view_offset > 0U) {
+                unsigned int page = TERMINAL_HEIGHT;
+                if (view_offset <= page) {
+                    view_offset = 0;
+                    scrollback_render_view();
+                    terminal_set_cursor_visible(1);
+                    terminal_update_cursor();
+                } else {
+                    view_offset -= page;
+                    scrollback_render_view();
+                    terminal_set_cursor_visible(0);
+                }
+            }
+            return;
+        }
+
+        if (view_offset != 0U) {
+            terminal_follow_bottom();
+        }
+
         if (code == 0x48U) {
             if (history_count == 0U) {
                 return;
@@ -984,6 +1122,10 @@ void terminal_keyboard_scancode(
 
     if (command_ready) {
         return;
+    }
+
+    if (view_offset != 0U) {
+        terminal_follow_bottom();
     }
 
     if (ctrl_down) {
@@ -1164,6 +1306,14 @@ void terminal_init(void) {
     language_layout = 0;
     layout_switch_latch = 0;
     command_buffer[0] = 0;
+    scrollback_count = 0;
+    scrollback_start = 0;
+    view_offset = 0;
+
+    outb(0x3D4, 0x0A);
+    cursor_start_value = inb(0x3D5);
+    terminal_set_cursor_visible(1);
+
     prompt_text[0] = '>';
     prompt_text[1] = ' ';
     prompt_text[2] = 0;
