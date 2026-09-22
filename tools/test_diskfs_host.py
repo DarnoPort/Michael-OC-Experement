@@ -73,6 +73,12 @@ def main() -> int:
             "/bin/hello.elf",
         )
         stored = diskfs_host.parse_elf32(payload)
+        regular_inode = diskfs_host.unpack_inode(
+            image,
+            diskfs_host.resolve_node(image, "/bin/hello.elf"),
+        )
+        assert regular_inode["flags"] == 0
+
         image = diskfs_host.import_file(
             image,
             elf,
