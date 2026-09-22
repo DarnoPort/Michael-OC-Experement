@@ -43,7 +43,7 @@ static void copy_string(
     destination[i] = '\0';
 }
 
-static void print_uint(
+static void process_print_uint(
     unsigned int value,
     unsigned char color
 ) {
@@ -1122,7 +1122,7 @@ void scheduler_print_processes(void) {
             continue;
         }
 
-        print_uint(
+        process_print_uint(
             process->pid,
             0x0F
         );
@@ -1144,7 +1144,7 @@ void scheduler_print_processes(void) {
             );
         }
 
-        print_uint(
+        process_print_uint(
             process->cr3,
             0x0F
         );
