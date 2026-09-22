@@ -24,6 +24,9 @@ MAX_FILE_SIZE = 65536
 NODE_FILE = 1
 NODE_DIR = 2
 
+DISKFS_FLAG_EXECUTABLE = 0x00000001
+DISKFS_FLAG_SUPPORTED = DISKFS_FLAG_EXECUTABLE
+
 SUPERBLOCK_SECTOR = 0
 INODE_START = 1
 INODE_SECTORS = 16
@@ -84,6 +87,7 @@ def pack_inode(
     data_sectors: int,
     parent: int,
     name: bytes,
+    flags: int = 0,
 ) -> bytes:
     if len(name) >= NAME_MAX:
         raise DiskFSError("inode name is too long")
@@ -97,7 +101,7 @@ def pack_inode(
         data_sectors,
         parent,
         raw_name,
-        0,
+        flags,
         0,
     )
 
@@ -115,6 +119,7 @@ def unpack_inode(image: bytes, inode_number: int) -> dict:
         "data_start": values[3],
         "data_sectors": values[4],
         "parent": values[5],
+        "flags": values[7],
         "name": name,
     }
 
@@ -129,6 +134,7 @@ def write_inode(image: bytearray, inode_number: int, inode: dict) -> None:
         inode["data_sectors"],
         inode["parent"],
         inode["name"],
+        inode.get("flags", 0),
     )
 
 
@@ -387,14 +393,19 @@ def validate_destination(
     return find_child(image, parent, name)
 
 
-def import_file(image: bytearray, source: Path, destination: str) -> bytearray:
+def import_file(
+    image: bytearray,
+    source: Path,
+    destination: str,
+    flags: int = 0,
+) -> bytearray:
     try:
         payload = source.read_bytes()
     except OSError as exc:
         raise DiskFSError(f"cannot read source file: {exc}") from exc
 
-    if len(payload) > MAX_FILE_SIZE:
-        raise DiskFSError(
+    if flags & ~DISKFS_FLAG_SUPPORTED:
+        raise DiskFSError("unsupported DiskFS flags")
             f"source is {len(payload)} bytes; DiskFS maximum is {MAX_FILE_SIZE}"
         )
 
@@ -446,6 +457,7 @@ def import_file(image: bytearray, source: Path, destination: str) -> bytearray:
             "data_sectors": required,
             "parent": parent,
             "name": name,
+            "flags": flags,
         },
     )
 
@@ -497,7 +509,12 @@ def list_directory(image: bytearray, path: str) -> None:
 
     entries.sort(key=lambda item: item["name"])
     for child in entries:
-        kind = "DIR " if child["type"] == NODE_DIR else "FILE"
+        if child["type"] == NODE_DIR:
+            kind = "DIR "
+        elif child["flags"] & DISKFS_FLAG_EXECUTABLE:
+            kind = "EXEC"
+        else:
+            kind = "FILE"
         print(f"[{kind}] {name_of(child)}  {child['size']} bytes")
 
 
@@ -703,7 +720,12 @@ def command_install_elf(args: argparse.Namespace) -> None:
         print(f"Created new {disk}.")
 
     image = load_image(disk)
-    image = import_file(image, source, args.destination)
+    image = import_file(
+        image,
+        source,
+        args.destination,
+        DISKFS_FLAG_EXECUTABLE,
+    )
     atomic_write(disk, image)
 
     print(f"Installed ELF32 {source} -> {args.destination}")
