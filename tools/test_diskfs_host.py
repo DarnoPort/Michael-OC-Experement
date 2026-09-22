@@ -101,6 +101,75 @@ def main() -> int:
         )
         assert executable["flags"] & diskfs_host.DISKFS_FLAG_EXECUTABLE
 
+        package = root / "package"
+        (package / "bin").mkdir(parents=True)
+        (package / "assets").mkdir()
+        (package / "bin" / "hello.elf").write_bytes(elf.read_bytes())
+        (package / "assets" / "config.txt").write_text(
+            "Michael OS external package\n",
+            encoding="utf-8",
+        )
+        (package / "empty").mkdir()
+
+        image = diskfs_host.load_image(disk)
+        image = diskfs_host.import_tree(
+            image,
+            package,
+            "/apps/demo",
+        )
+        diskfs_host.atomic_write(disk, image)
+        image = diskfs_host.load_image(disk)
+
+        installed_elf = diskfs_host.unpack_inode(
+            image,
+            diskfs_host.resolve_node(
+                image,
+                "/apps/demo/bin/hello.elf",
+            ),
+        )
+        assert installed_elf["flags"] & diskfs_host.DISKFS_FLAG_EXECUTABLE
+
+        config = diskfs_host.read_diskfs_file(
+            image,
+            "/apps/demo/assets/config.txt",
+        )
+        assert config == b"Michael OS external package\n"
+
+        empty_dir = diskfs_host.unpack_inode(
+            image,
+            diskfs_host.resolve_node(
+                image,
+                "/apps/demo/empty",
+            ),
+        )
+        assert empty_dir["type"] == diskfs_host.NODE_DIR
+
+        bad_elf = package / "broken.elf"
+        bad_elf.write_bytes(diskfs_host.ELF_MAGIC + b"broken")
+        try:
+            diskfs_host.import_tree(
+                image,
+                bad_elf,
+                "/apps/demo/broken.elf",
+            )
+        except diskfs_host.DiskFSError:
+            pass
+        else:
+            raise AssertionError("malformed ELF was accepted")
+
+        symlink = root / "symlink"
+        symlink.symlink_to(elf)
+        try:
+            diskfs_host.import_tree(
+                image,
+                symlink,
+                "/apps/demo/symlink",
+            )
+        except diskfs_host.DiskFSError:
+            pass
+        else:
+            raise AssertionError("symbolic link was accepted")
+
         bad = bytearray(elf.read_bytes())
         bad[0] = 0
         bad_path = root / "bad.elf"
