@@ -18,7 +18,7 @@ QEMU := qemu-system-i386
 
 CFLAGS := -m32 -std=gnu99 -ffreestanding -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-builtin -Wall -Wextra
 LDFLAGS := -m elf_i386 -T linker.ld
-OBJS := $(BUILD)/boot.o $(BUILD)/interrupts.o $(BUILD)/kernel.o $(BUILD)/terminal.o $(BUILD)/terminal_font.o $(BUILD)/memory.o $(BUILD)/paging.o $(BUILD)/process.o $(BUILD)/elf_loader.o $(BUILD)/syscalls.o $(BUILD)/ata.o $(BUILD)/diskfs.o $(BUILD)/vfs.o $(BUILD)/shell.o $(BUILD)/user_image.o $(BUILD)/user_exec_image.o $(BUILD)/user_args_image.o
+OBJS := $(BUILD)/boot.o $(BUILD)/interrupts.o $(BUILD)/kernel.o $(BUILD)/terminal.o $(BUILD)/terminal_font.o $(BUILD)/memory.o $(BUILD)/paging.o $(BUILD)/process.o $(BUILD)/elf_loader.o $(BUILD)/syscalls.o $(BUILD)/ata.o $(BUILD)/diskfs.o $(BUILD)/vfs.o $(BUILD)/shell.o $(BUILD)/user_image.o $(BUILD)/user_exec_image.o $(BUILD)/user_args_image.o $(BUILD)/user_stdio_image.o
 
 .PHONY: all iso disk disk-reset disk-import disk-export disk-ls elf-install elf-check disk-elf-check run check clean
 
@@ -58,13 +58,13 @@ $(BUILD)/memory.o: memory.c memory.h paging.h | $(BUILD)
 $(BUILD)/paging.o: paging.c paging.h memory.h linker.ld | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/process.o: process.c process.h memory.h paging.h syscalls.h elf.h vfs.h | $(BUILD)
+$(BUILD)/process.o: process.c process.h memory.h paging.h syscalls.h elf.h vfs.h terminal.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/elf_loader.o: elf_loader.c elf.h process.h paging.h memory.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/syscalls.o: syscalls.c syscalls.h memory.h paging.h process.h vfs.h | $(BUILD)
+$(BUILD)/syscalls.o: syscalls.c syscalls.h memory.h paging.h process.h vfs.h terminal.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/ata.o: ata.c ata.h | $(BUILD)
@@ -86,6 +86,15 @@ $(BUILD)/user_args.elf: $(BUILD)/user_args_raw.o user.ld | $(BUILD)
 	$(LD) -m elf_i386 -T user.ld -o $@ $(BUILD)/user_args_raw.o
 
 $(BUILD)/user_args_image.o: user_args_image.asm $(BUILD)/user_args.elf | $(BUILD)
+	$(AS) -f elf32 $< -o $@
+
+$(BUILD)/user_stdio_raw.o: user_stdio.asm | $(BUILD)
+	$(AS) -f elf32 $< -o $@
+
+$(BUILD)/user_stdio.elf: $(BUILD)/user_stdio_raw.o user.ld | $(BUILD)
+	$(LD) -m elf_i386 -T user.ld -o $@ $(BUILD)/user_stdio_raw.o
+
+$(BUILD)/user_stdio_image.o: user_stdio_image.asm $(BUILD)/user_stdio.elf | $(BUILD)
 	$(AS) -f elf32 $< -o $@
 
 $(BUILD)/user_program_raw.o: user_program.asm | $(BUILD)
