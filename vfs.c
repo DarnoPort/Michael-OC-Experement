@@ -8,6 +8,7 @@ struct vfs_node {
     unsigned int size;
     unsigned int capacity;
     unsigned int inode;
+    unsigned int flags;
     unsigned char* data;
 
     struct vfs_node* parent;
@@ -380,6 +381,7 @@ static struct vfs_node* allocate_node(
     node->size = size;
     node->capacity = 0;
     node->inode = inode;
+    node->flags = 0;
     node->parent = parent;
 
     node_count++;
@@ -467,7 +469,9 @@ static int load_disk_tree(void) {
         if ((info.type != VFS_NODE_FILE &&
              info.type != VFS_NODE_DIR) ||
             info.parent >= VFS_MAX_NODES ||
-            info.size > VFS_MAX_FILE_SIZE) {
+            info.size > VFS_MAX_FILE_SIZE ||
+            (info.flags & ~DISKFS_FLAG_SUPPORTED) != 0 ||
+            (info.type == VFS_NODE_DIR && info.flags != 0U)) {
             return 0;
         }
 
@@ -488,6 +492,7 @@ static int load_disk_tree(void) {
             return 0;
         }
 
+        node->flags = info.flags;
         map[inode] = node;
     }
 
@@ -577,6 +582,14 @@ int vfs_node_is_directory(
 ) {
     return node &&
            node->type == VFS_NODE_DIR;
+}
+
+int vfs_node_is_executable(
+    const struct vfs_node* node
+) {
+    return node &&
+           node->type == VFS_NODE_FILE &&
+           (node->flags & DISKFS_FLAG_EXECUTABLE) != 0;
 }
 
 unsigned int vfs_node_size(
@@ -763,6 +776,48 @@ int vfs_mkdir(
         path,
         VFS_NODE_DIR
     ) != 0;
+}
+
+int vfs_set_executable(
+    const char* path,
+    int executable
+) {
+    struct vfs_node* node;
+    unsigned int flags;
+    unsigned int irq_flags;
+
+    if (!vfs_ready ||
+        !path ||
+        path[0] != '/') {
+        return 0;
+    }
+
+    irq_flags = irq_save_vfs();
+
+    node = vfs_lookup(path);
+
+    if (!node ||
+        node->type != VFS_NODE_FILE) {
+        irq_restore_vfs(irq_flags);
+        return 0;
+    }
+
+    flags = executable
+        ? DISKFS_FLAG_EXECUTABLE
+        : 0U;
+
+    if (!diskfs_set_flags(
+            node->inode,
+            flags
+        )) {
+        irq_restore_vfs(irq_flags);
+        return 0;
+    }
+
+    node->flags = flags;
+
+    irq_restore_vfs(irq_flags);
+    return 1;
 }
 
 int vfs_create_file(

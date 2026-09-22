@@ -651,7 +651,14 @@ static void command_ls(const char* args) {
             0x0F
         );
         print_string("  ", 0x07);
-        print_string("FILE  ", 0x0E);
+        print_string(
+            vfs_node_is_executable(node)
+                ? "EXEC  "
+                : "FILE  ",
+            vfs_node_is_executable(node)
+                ? 0x0A
+                : 0x0E
+        );
 
         {
             unsigned int size =
@@ -699,6 +706,11 @@ static void command_ls(const char* args) {
                 print_string(
                     "[DIR ] ",
                     0x0B
+                );
+            } else if (vfs_node_is_executable(child)) {
+                print_string(
+                    "[EXEC] ",
+                    0x0A
                 );
             } else {
                 print_string(
@@ -815,6 +827,9 @@ static void command_dir_wide(
         if (vfs_node_is_directory(child)) {
             shell_copy(option, "[DIR] ", sizeof(option));
             prefix_length = 6U;
+        } else if (vfs_node_is_executable(child)) {
+            shell_copy(option, "[EXEC] ", sizeof(option));
+            prefix_length = 7U;
         } else {
             shell_copy(option, "[FILE] ", sizeof(option));
             prefix_length = 7U;
@@ -2037,6 +2052,14 @@ static void command_run(
         return;
     }
 
+    if (!vfs_node_is_executable(node)) {
+        print_error(
+            "run: ",
+            "file is not marked executable; use elf-install for ELF programs."
+        );
+        return;
+    }
+
     if (!shell_read_file_image(
             path,
             &image,
@@ -2180,7 +2203,7 @@ static void command_help(
     } else if (shell_command_name_is(topic, "close")) {
         print_string("CLOSE <fd> - closes a shell file descriptor.\n", 0x0F);
     } else if (shell_command_name_is(topic, "run")) {
-        print_string("RUN <path> [args...] - loads and runs an ELF32 program.\n", 0x0F);
+        print_string("RUN <path> [args...] - loads and runs an executable file marked for execution.\n", 0x0F);
     } else if (shell_command_name_is(topic, "ver")) {
         print_string("VER - shows the current Michael OS version.\n", 0x0F);
     } else if (shell_command_name_is(topic, "history")) {
@@ -2307,6 +2330,18 @@ static int command_install_demo(void) {
     }
 
     vfs_close(file);
+
+    if (!vfs_set_executable(
+            "/bin/demo.elf",
+            1
+        )) {
+        (void)vfs_remove("/bin/demo.elf");
+        print_error(
+            "demo: ",
+            "cannot mark executable."
+        );
+        return 0;
+    }
 
     print_string(
         "Installed /bin/demo.elf (",
@@ -2461,6 +2496,18 @@ static int command_install_exec_test(void) {
 
     vfs_close(file);
 
+    if (!vfs_set_executable(
+            "/bin/exec-test.elf",
+            1
+        )) {
+        (void)vfs_remove("/bin/exec-test.elf");
+        print_error(
+            "exec-test: ",
+            "cannot mark executable."
+        );
+        return 0;
+    }
+
     print_string(
         "Installed /bin/exec-test.elf (",
         0x0A
@@ -2558,6 +2605,18 @@ static int command_install_args_test(void) {
     }
 
     vfs_close(file);
+
+    if (!vfs_set_executable(
+            "/bin/args-test.elf",
+            1
+        )) {
+        (void)vfs_remove("/bin/args-test.elf");
+        print_error(
+            "args-test: ",
+            "cannot mark executable."
+        );
+        return 0;
+    }
 
     print_string(
         "Installed /bin/args-test.elf (",

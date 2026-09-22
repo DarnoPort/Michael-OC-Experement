@@ -10,6 +10,9 @@
 #define DISKFS_NODE_FILE 1U
 #define DISKFS_NODE_DIR  2U
 
+#define DISKFS_FLAG_EXECUTABLE 0x00000001U
+#define DISKFS_FLAG_SUPPORTED  DISKFS_FLAG_EXECUTABLE
+
 struct diskfs_inode_info {
     unsigned int used;
     unsigned int type;
@@ -17,6 +20,7 @@ struct diskfs_inode_info {
     unsigned int data_start;
     unsigned int data_sectors;
     unsigned int parent;
+    unsigned int flags;
     char name[DISKFS_NAME_MAX];
 };
 
@@ -35,6 +39,10 @@ int diskfs_create_node(
 int diskfs_remove_node(unsigned int inode);
 int diskfs_rename_node(unsigned int inode, const char* new_name);
 int diskfs_move_node(unsigned int inode, unsigned int new_parent, const char* new_name);
+int diskfs_set_flags(
+    unsigned int inode,
+    unsigned int flags
+);
 int diskfs_read_file(
     unsigned int inode,
     void* buffer,
