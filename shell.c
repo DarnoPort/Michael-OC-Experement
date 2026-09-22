@@ -581,9 +581,6 @@ static void shell_complete_path(const char* command, unsigned int token_start) {
         if (vfs_node_is_directory(unique)) {
             if (full_length + 1U >= sizeof(full)) return;
             full[full_length++] = '/';
-        } else {
-            if (full_length + 1U >= sizeof(full)) return;
-            full[full_length++] = ' ';
         }
         full[full_length] = '\0';
         terminal_replace_command(full);
