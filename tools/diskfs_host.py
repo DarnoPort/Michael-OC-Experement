@@ -700,6 +700,150 @@ def read_diskfs_file(image: bytearray, source: str) -> bytes:
     return b""
 
 
+
+def validate_host_entry(source: Path) -> str:
+    """Return the supported host entry type."""
+    if source.is_symlink():
+        raise DiskFSError(f"symbolic links are not supported: {source}")
+    if source.is_file():
+        return "file"
+    if source.is_dir():
+        return "directory"
+    raise DiskFSError(f"unsupported host entry type: {source}")
+
+
+def detect_install_flags(source: Path) -> int:
+    """Validate Michael OS ELF files and mark them executable."""
+    try:
+        with source.open("rb") as handle:
+            magic = handle.read(4)
+    except OSError as exc:
+        raise DiskFSError(f"cannot read source file {source}: {exc}") from exc
+
+    if magic != ELF_MAGIC:
+        return 0
+
+    validate_elf32_file(source)
+    return DISKFS_FLAG_EXECUTABLE
+
+
+def ensure_directory_for_install(image: bytearray, path: str) -> bytearray:
+    """Create or validate a destination directory."""
+    if path == "/":
+        return image
+
+    parts = parse_disk_path(path)
+    current = 0
+
+    for part in parts:
+        existing = find_child(image, current, part)
+        if existing is None:
+            inode_number = find_free_inode(image)
+            write_inode(
+                image,
+                inode_number,
+                {
+                    "used": 1,
+                    "type": NODE_DIR,
+                    "size": 0,
+                    "data_start": 0,
+                    "data_sectors": 0,
+                    "parent": current,
+                    "name": part,
+                },
+            )
+            current = inode_number
+            continue
+
+        inode = unpack_inode(image, existing)
+        if inode["type"] != NODE_DIR:
+            raise DiskFSError(
+                f"destination component exists and is not a directory: {part!r}"
+            )
+        current = existing
+
+    return image
+
+
+def import_tree(
+    image: bytearray,
+    source: Path,
+    destination: str,
+) -> bytearray:
+    """
+    Install a host file or directory tree into DiskFS.
+
+    Files are copied as FILEs unless they contain an ELF magic. ELF32
+    files are validated and stored with the executable flag.
+    Existing files are replaced and existing directories are merged.
+    Symbolic links and other unsupported host entries are rejected.
+    """
+    entry_type = validate_host_entry(source)
+
+    if entry_type == "file":
+        return import_file(
+            image,
+            source,
+            destination,
+            detect_install_flags(source),
+        )
+
+    ensure_directory_for_install(image, destination)
+
+    destination_parts = parse_disk_path(destination)
+    root_prefix = "/" + "/".join(
+        part.decode("utf-8") for part in destination_parts
+    )
+
+    try:
+        entries = sorted(
+            source.rglob("*"),
+            key=lambda path: path.relative_to(source).as_posix(),
+        )
+    except OSError as exc:
+        raise DiskFSError(f"cannot walk source directory {source}: {exc}") from exc
+
+    for entry in entries:
+        if entry.is_symlink():
+            raise DiskFSError(f"symbolic links are not supported: {entry}")
+
+        relative_text = entry.relative_to(source).as_posix()
+        target = root_prefix.rstrip("/") + "/" + relative_text
+
+        if entry.is_dir():
+            ensure_directory_for_install(image, target)
+            continue
+
+        if not entry.is_file():
+            raise DiskFSError(f"unsupported host entry type: {entry}")
+
+        image = import_file(
+            image,
+            entry,
+            target,
+            detect_install_flags(entry),
+        )
+
+    return image
+
+
+def command_install(args: argparse.Namespace) -> None:
+    source = Path(args.source)
+    validate_host_entry(source)
+
+    disk = Path(args.disk)
+    if not disk.exists():
+        diskfs_format(disk)
+        print(f"Created new {disk}.")
+
+    image = load_image(disk)
+    image = import_tree(image, source, args.destination)
+    atomic_write(disk, image)
+
+    kind = "directory" if source.is_dir() else "file"
+    print(f"Installed host {kind} {source} -> {args.destination}")
+
+
 def command_import(args: argparse.Namespace) -> None:
     disk = Path(args.disk)
     if not disk.exists():
@@ -777,6 +921,17 @@ def main() -> int:
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    install_tree_parser = subparsers.add_parser(
+        "install",
+        help=(
+            "install a host file or directory tree into DiskFS; "
+            "ELF32 files are validated and marked executable"
+        ),
+    )
+    install_tree_parser.add_argument("source")
+    install_tree_parser.add_argument("destination")
+    install_tree_parser.set_defaults(handler=command_install)
 
     install_parser = subparsers.add_parser(
         "install-elf",
