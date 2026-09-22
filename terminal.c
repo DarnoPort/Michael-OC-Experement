@@ -41,6 +41,14 @@ static int layout_switch_latch = 0;
  * become duplicate input bytes. Explicit key repeats can be added
  * later as a terminal feature with controlled timing. */
 static unsigned char key_down[128];
+static unsigned int key_last_accept_tick[128];
+
+/* Ignore unrealistically fast make/break/make cycles. Some emulated
+ * PS/2 paths can represent typematic as a full make+break pair rather
+ * than a repeated make code. At 100 Hz this gives a 50 ms guard. */
+#define TERMINAL_KEY_REPEAT_GUARD_TICKS 5U
+
+extern volatile unsigned int timer_ticks;
 
 static unsigned char vga_font_buffer[256U * 32U];
 
@@ -1322,11 +1330,20 @@ void terminal_keyboard_scancode(
         }
 
         if (code < sizeof(key_down)) {
+            unsigned int now = timer_ticks;
+
             if (key_down[code]) {
                 return;
             }
 
+            if (now - key_last_accept_tick[code] <
+                TERMINAL_KEY_REPEAT_GUARD_TICKS) {
+                key_down[code] = 1;
+                return;
+            }
+
             key_down[code] = 1;
+            key_last_accept_tick[code] = now;
         }
     }
 
@@ -1587,6 +1604,7 @@ void terminal_init(void) {
     layout_switch_latch = 0;
     for (unsigned int i = 0; i < sizeof(key_down); i++) {
         key_down[i] = 0;
+        key_last_accept_tick[i] = 0;
     }
     command_buffer[0] = 0;
     tab_handler = 0;
@@ -1638,6 +1656,7 @@ void terminal_set_stdin_active(int active) {
     /* A new input session starts with no keys logically held. */
     for (unsigned int i = 0; i < sizeof(key_down); i++) {
         key_down[i] = 0;
+        key_last_accept_tick[i] = 0;
     }
 
     stdin_active = active ? 1 : 0;
