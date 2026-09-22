@@ -1168,12 +1168,20 @@ int diskfs_check(
             continue;
         }
 
+        if (inode.used != 1U) {
+            errors++;
+        }
+
         used_inodes++;
 
         if (i == 0U) {
-            if (inode.type != DISKFS_NODE_DIR ||
+            if (inode.used != 1U ||
+                inode.type != DISKFS_NODE_DIR ||
                 inode.parent != 0U ||
-                inode.name[0] != '/') {
+                !diskfs_name_equal(
+                    &inode,
+                    "/"
+                )) {
                 errors++;
             }
             if (inode.size != 0U ||
