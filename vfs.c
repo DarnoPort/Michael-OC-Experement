@@ -525,6 +525,7 @@ static int load_disk_tree(void) {
 
 int vfs_init(void) {
     unsigned int flags;
+    struct diskfs_check_report report;
 
     flags = irq_save_vfs();
 
@@ -538,6 +539,12 @@ int vfs_init(void) {
     vfs_ready = 0;
 
     if (!diskfs_init()) {
+        irq_restore_vfs(flags);
+        return 0;
+    }
+
+    if (!diskfs_check(&report) ||
+        report.errors != 0U) {
         irq_restore_vfs(flags);
         return 0;
     }
