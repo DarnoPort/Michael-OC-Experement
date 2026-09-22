@@ -442,13 +442,18 @@ static int validate_node_name(
 ) {
     unsigned int length = 0;
 
-    if (!name ||
-        name[0] == '\0') {
+    if (!name) {
         return 0;
     }
 
-    while (name[length] != '\0') {
-        if (name[length] == '/' ||
+    while (length < DISKFS_NAME_MAX) {
+        char value = name[length];
+
+        if (value == '\0') {
+            return length > 0U;
+        }
+
+        if (value == '/' ||
             length >= DISKFS_NAME_MAX - 1U) {
             return 0;
         }
@@ -456,7 +461,7 @@ static int validate_node_name(
         length++;
     }
 
-    return length > 0U;
+    return 0;
 }
 
 int diskfs_init(void) {
