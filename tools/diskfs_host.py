@@ -43,6 +43,25 @@ DISK_SIZE = TOTAL_SECTORS * SECTOR_SIZE
 BITMAP_BYTES = BITMAP_SECTORS * SECTOR_SIZE
 DATA_SECTORS = TOTAL_SECTORS - DATA_START
 
+USER_VM_BASE = 0x80000000
+USER_HEAP_BASE = 0x80100000
+
+ELF_MAGIC = b"\\x7fELF"
+ELFCLASS32 = 1
+ELFDATA2LSB = 1
+ET_EXEC = 2
+EM_386 = 3
+EV_CURRENT = 1
+PT_LOAD = 1
+PF_X = 1
+PF_W = 2
+PF_R = 4
+
+ELF_HEADER_FMT = "<16sHHIIIIIHHHHHH"
+ELF_PHDR_FMT = "<IIIIIIII"
+ELF_HEADER_SIZE = struct.calcsize(ELF_HEADER_FMT)
+ELF_PHDR_SIZE = struct.calcsize(ELF_PHDR_FMT)
+
 
 class DiskFSError(Exception):
     pass
@@ -505,6 +524,162 @@ def atomic_write(path: Path, image: bytearray) -> None:
         raise DiskFSError(f"cannot replace disk image: {exc}") from exc
 
 
+def parse_elf32(image: bytes) -> dict:
+    if len(image) < ELF_HEADER_SIZE:
+        raise DiskFSError("ELF image is smaller than an ELF32 header")
+
+    values = struct.unpack_from(ELF_HEADER_FMT, image, 0)
+    ident = values[0]
+    if (
+        ident[:4] != ELF_MAGIC
+        or ident[4] != ELFCLASS32
+        or ident[5] != ELFDATA2LSB
+        or ident[6] != EV_CURRENT
+        or values[1] != ET_EXEC
+        or values[2] != EM_386
+        or values[3] != EV_CURRENT
+        or values[8] != ELF_HEADER_SIZE
+        or values[9] != ELF_PHDR_SIZE
+        or values[10] == 0
+    ):
+        raise DiskFSError(
+            "unsupported ELF: expected little-endian 32-bit x86 ET_EXEC"
+        )
+
+    entry = values[4]
+    phoff = values[5]
+    phnum = values[10]
+
+    ph_end = phoff + phnum * ELF_PHDR_SIZE
+    if ph_end < phoff or ph_end > len(image):
+        raise DiskFSError("ELF program header table is outside the image")
+
+    loaded = []
+    page_bitmap = bytearray((USER_HEAP_BASE - USER_VM_BASE) // 0x1000 // 8)
+
+    for index in range(phnum):
+        offset = phoff + index * ELF_PHDR_SIZE
+        ph = struct.unpack_from(ELF_PHDR_FMT, image, offset)
+
+        p_type, p_offset, p_vaddr, _p_paddr, p_filesz, p_memsz, p_flags, p_align = ph
+
+        if p_type != PT_LOAD:
+            continue
+
+        if p_memsz < p_filesz:
+            raise DiskFSError(f"PT_LOAD #{index}: p_memsz is smaller than p_filesz")
+
+        if p_offset + p_filesz < p_offset or p_offset + p_filesz > len(image):
+            raise DiskFSError(f"PT_LOAD #{index}: file range is outside the image")
+
+        if p_memsz == 0:
+            continue
+
+        segment_end = p_vaddr + p_memsz
+        if segment_end < p_vaddr:
+            raise DiskFSError(f"PT_LOAD #{index}: virtual address range overflows")
+
+        if p_vaddr < USER_VM_BASE or segment_end > USER_HEAP_BASE:
+            raise DiskFSError(
+                f"PT_LOAD #{index}: virtual range must stay inside "
+                f"0x{USER_VM_BASE:08x}-0x{USER_HEAP_BASE:08x}"
+            )
+
+        if p_flags & ~(PF_R | PF_W | PF_X):
+            raise DiskFSError(f"PT_LOAD #{index}: unsupported permission flags")
+
+        page_start = p_vaddr & 0xFFFFF000
+        page_end = (segment_end + 0xFFF) & 0xFFFFF000
+        for address in range(page_start, page_end, 0x1000):
+            page = (address - USER_VM_BASE) // 0x1000
+            byte_index = page >> 3
+            bit = 1 << (page & 7)
+            if page_bitmap[byte_index] & bit:
+                raise DiskFSError(
+                    f"PT_LOAD #{index}: overlaps another loadable segment"
+                )
+            page_bitmap[byte_index] |= bit
+
+        loaded.append({
+            "index": index,
+            "offset": p_offset,
+            "vaddr": p_vaddr,
+            "filesz": p_filesz,
+            "memsz": p_memsz,
+            "flags": p_flags,
+            "align": p_align,
+        })
+
+    if not loaded:
+        raise DiskFSError("ELF image contains no PT_LOAD segments")
+
+    if not any(segment["vaddr"] <= entry < segment["vaddr"] + segment["memsz"] for segment in loaded):
+        raise DiskFSError("ELF entry point is not inside a PT_LOAD segment")
+
+    return {
+        "entry": entry,
+        "phnum": phnum,
+        "segments": loaded,
+    }
+
+
+def validate_elf32_file(source: Path) -> dict:
+    try:
+        image = source.read_bytes()
+    except OSError as exc:
+        raise DiskFSError(f"cannot read ELF source: {exc}") from exc
+
+    if len(image) > MAX_FILE_SIZE:
+        raise DiskFSError(
+            f"ELF source is {len(image)} bytes; DiskFS maximum is {MAX_FILE_SIZE}"
+        )
+
+    return parse_elf32(image)
+
+
+def format_elf_info(path: Path, info: dict) -> None:
+    print(f"{path}: valid ELF32 i386 executable")
+    print(f"Entry: 0x{info['entry']:08x}")
+    print(f"Loadable segments: {len(info['segments'])}")
+    for segment in info["segments"]:
+        permissions = (
+            ("R" if segment["flags"] & PF_R else "-")
+            + ("W" if segment["flags"] & PF_W else "-")
+            + ("X" if segment["flags"] & PF_X else "-")
+        )
+        print(
+            f"  PT_LOAD #{segment['index']}: "
+            f"vaddr=0x{segment['vaddr']:08x} "
+            f"file={segment['filesz']} mem={segment['memsz']} "
+            f"flags={permissions}"
+        )
+
+
+def read_diskfs_file(image: bytearray, source: str) -> bytes:
+    inode_number = resolve_node(image, source)
+    inode = unpack_inode(image, inode_number)
+
+    if not inode["used"] or inode["type"] != NODE_FILE:
+        raise DiskFSError("source is not a file")
+
+    if inode["size"] > MAX_FILE_SIZE:
+        raise DiskFSError("source inode has an invalid size")
+
+    required = (inode["size"] + SECTOR_SIZE - 1) // SECTOR_SIZE
+    if inode["data_sectors"] != required:
+        raise DiskFSError("source inode has inconsistent sector count")
+
+    if required:
+        start = inode["data_start"]
+        if start < DATA_START or start + required > TOTAL_SECTORS:
+            raise DiskFSError("source inode has an invalid data extent")
+        return bytes(
+            image[start * SECTOR_SIZE : start * SECTOR_SIZE + inode["size"]]
+        )
+
+    return b""
+
+
 def command_import(args: argparse.Namespace) -> None:
     disk = Path(args.disk)
     if not disk.exists():
@@ -516,6 +691,37 @@ def command_import(args: argparse.Namespace) -> None:
     atomic_write(disk, image)
 
     print(f"Imported {args.source} -> {args.destination}")
+
+
+def command_install_elf(args: argparse.Namespace) -> None:
+    source = Path(args.source)
+    info = validate_elf32_file(source)
+
+    disk = Path(args.disk)
+    if not disk.exists():
+        diskfs_format(disk)
+        print(f"Created new {disk}.")
+
+    image = load_image(disk)
+    image = import_file(image, source, args.destination)
+    atomic_write(disk, image)
+
+    print(f"Installed ELF32 {source} -> {args.destination}")
+    print(f"Entry: 0x{info['entry']:08x}")
+    print(f"Loadable segments: {len(info['segments'])}")
+
+
+def command_check_elf(args: argparse.Namespace) -> None:
+    source = Path(args.source)
+    info = validate_elf32_file(source)
+    format_elf_info(source, info)
+
+
+def command_check_disk_elf(args: argparse.Namespace) -> None:
+    image = load_image(Path(args.disk))
+    payload = read_diskfs_file(image, args.source)
+    info = parse_elf32(payload)
+    format_elf_info(Path(args.source), info)
 
 
 def command_export(args: argparse.Namespace) -> None:
@@ -540,6 +746,28 @@ def main() -> int:
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    install_parser = subparsers.add_parser(
+        "install-elf",
+        help="validate and install a host ELF32 executable into DiskFS",
+    )
+    install_parser.add_argument("source")
+    install_parser.add_argument("destination")
+    install_parser.set_defaults(handler=command_install_elf)
+
+    elf_check_parser = subparsers.add_parser(
+        "elf-check",
+        help="validate a host ELF32 executable",
+    )
+    elf_check_parser.add_argument("source")
+    elf_check_parser.set_defaults(handler=command_check_elf)
+
+    disk_elf_parser = subparsers.add_parser(
+        "disk-elf-check",
+        help="validate an ELF32 executable already stored in DiskFS",
+    )
+    disk_elf_parser.add_argument("source")
+    disk_elf_parser.set_defaults(handler=command_check_disk_elf)
 
     import_parser = subparsers.add_parser(
         "import",
