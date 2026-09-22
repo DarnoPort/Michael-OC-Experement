@@ -26,7 +26,7 @@ user_program_start:
 .read_loop:
     mov eax, SYS_READ
     mov ebx, STDIN
-    mov ecx, input_buffer
+    mov ecx, input_char
     mov edx, 1
     int 0x80
 
@@ -36,14 +36,15 @@ user_program_start:
     cmp eax, 0
     je .yield
 
-    cmp byte [input_buffer], 10
+    cmp byte [input_char], 10
     je .got_line
 
     mov eax, [input_length]
     cmp eax, 63
-    jae .read_loop
+    jae .exit
 
-    mov [input_buffer + eax], byte 0
+    mov dl, [input_char]
+    mov [input_buffer + eax], dl
     inc eax
     mov [input_length], eax
     jmp .read_loop
@@ -107,3 +108,6 @@ input_length:
 section .bss
 input_buffer:
     resb 64
+
+input_char:
+    resb 1
