@@ -4,6 +4,18 @@
 #define PROCESS_MAX 8
 #define PROCESS_NAME_MAX 16
 #define PROCESS_FD_MAX 8
+
+#define PROCESS_FD_STDIN  0
+#define PROCESS_FD_STDOUT 1
+#define PROCESS_FD_STDERR 2
+#define PROCESS_FD_FIRST_FILE 3
+
+#define PROCESS_FD_UNUSED  0
+#define PROCESS_FD_FILE    1
+#define PROCESS_FD_STDIN_K 2
+#define PROCESS_FD_STDOUT_K 3
+#define PROCESS_FD_STDERR_K 4
+
 #define PROCESS_ARG_MAX 8
 #define PROCESS_ARG_MAX_LEN 128
 
@@ -30,6 +42,7 @@ struct process {
     unsigned int saved_esp;
 
     int started;
+    unsigned char fd_kinds[PROCESS_FD_MAX];
     struct vfs_file* files[PROCESS_FD_MAX];
     char name[PROCESS_NAME_MAX];
 };
@@ -84,6 +97,16 @@ unsigned int scheduler_current_cr3(void);
 
 int process_fd_install(struct vfs_file* file);
 struct vfs_file* process_fd_get(int fd);
+int process_fd_read(
+    int fd,
+    void* buffer,
+    unsigned int length
+);
+int process_fd_write(
+    int fd,
+    const void* buffer,
+    unsigned int length
+);
 int process_fd_close(int fd);
 
 int process_sbrk(unsigned int increment, unsigned int* old_break);
