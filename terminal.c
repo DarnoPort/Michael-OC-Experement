@@ -1604,7 +1604,8 @@ void terminal_init(void) {
     layout_switch_latch = 0;
     for (unsigned int i = 0; i < sizeof(key_down); i++) {
         key_down[i] = 0;
-        key_last_accept_tick[i] = 0;
+        key_last_accept_tick[i] =
+            0xFFFFFFFFU;
     }
     command_buffer[0] = 0;
     tab_handler = 0;
@@ -1656,7 +1657,8 @@ void terminal_set_stdin_active(int active) {
     /* A new input session starts with no keys logically held. */
     for (unsigned int i = 0; i < sizeof(key_down); i++) {
         key_down[i] = 0;
-        key_last_accept_tick[i] = 0;
+        key_last_accept_tick[i] =
+            0xFFFFFFFFU;
     }
 
     stdin_active = active ? 1 : 0;
