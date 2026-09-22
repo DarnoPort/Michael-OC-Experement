@@ -12,6 +12,13 @@ static unsigned int prompt_col = 0;
 static char command_buffer[TERMINAL_INPUT_MAX];
 static char prompt_text[TERMINAL_PROMPT_MAX];
 static unsigned int command_length = 0;
+
+#define TERMINAL_STDIN_BUFFER_MAX 512U
+static unsigned char stdin_buffer[TERMINAL_STDIN_BUFFER_MAX];
+static unsigned int stdin_head = 0;
+static unsigned int stdin_tail = 0;
+static unsigned int stdin_count = 0;
+static int stdin_active = 0;
 static unsigned int cursor_index = 0;
 static int command_ready = 0;
 static terminal_tab_handler_t tab_handler = 0;
@@ -29,6 +36,25 @@ static int alt_down = 0;
 static int caps_lock = 0;
 static int language_layout = 0;
 static int layout_switch_latch = 0;
+
+/*
+ * Track the logical state of each ordinary key independently of the
+ * individual make/break packets. Some host/QEMU input paths can turn
+ * host autorepeat into make/break/make cycles. Those cycles must not
+ * become repeated terminal input bytes.
+ *
+ * A key remains logically held until there has been a quiet interval.
+ * A new make after that quiet interval starts a new logical press.
+ * This keeps the normal PS/2 make-only typematic stream working while
+ * also filtering emulated make/break/make repeats.
+ */
+static unsigned char key_down[128];
+static unsigned int key_last_event_tick[128];
+
+/* PIT runs at 100 Hz, so 15 ticks = 150 ms. */
+#define TERMINAL_KEY_REPEAT_QUIET_TICKS 15U
+
+extern volatile unsigned int timer_ticks;
 
 static unsigned char vga_font_buffer[256U * 32U];
 
@@ -59,6 +85,86 @@ static inline unsigned char inb(
 );
 
 static void terminal_update_cursor(void);
+
+static unsigned int terminal_irq_save(void) {
+    unsigned int flags;
+    asm volatile(
+        "pushfl\n"
+        "popl %0\n"
+        "cli\n"
+        : "=r"(flags)
+    );
+    return flags;
+}
+
+static void terminal_irq_restore(unsigned int flags) {
+    asm volatile(
+        "pushl %0\n"
+        "popfl\n"
+        :
+        : "r"(flags)
+        : "memory"
+    );
+}
+
+static void terminal_stdin_reset(void) {
+    unsigned int flags = terminal_irq_save();
+
+    stdin_head = 0;
+    stdin_tail = 0;
+    stdin_count = 0;
+
+    terminal_irq_restore(flags);
+}
+
+static void terminal_stdin_push(unsigned char value) {
+    unsigned int flags;
+
+    if (!stdin_active) {
+        return;
+    }
+
+    flags = terminal_irq_save();
+
+    if (stdin_count < TERMINAL_STDIN_BUFFER_MAX) {
+        stdin_buffer[stdin_tail] = value;
+        stdin_tail =
+            (stdin_tail + 1U) %
+            TERMINAL_STDIN_BUFFER_MAX;
+        stdin_count++;
+    }
+
+    terminal_irq_restore(flags);
+}
+
+static int terminal_stdin_pop(
+    unsigned char* destination,
+    unsigned int length
+) {
+    unsigned int flags;
+    unsigned int total = 0;
+
+    if (!destination || length == 0U) {
+        return 0;
+    }
+
+    flags = terminal_irq_save();
+
+    while (total < length &&
+           stdin_count > 0U) {
+        destination[total++] =
+            stdin_buffer[stdin_head];
+
+        stdin_head =
+            (stdin_head + 1U) %
+            TERMINAL_STDIN_BUFFER_MAX;
+
+        stdin_count--;
+    }
+
+    terminal_irq_restore(flags);
+    return (int)total;
+}
 
 static void terminal_install_cyrillic_font(void) {
     volatile unsigned char* font_memory =
@@ -1066,6 +1172,10 @@ void terminal_keyboard_scancode(
             return;
         }
 
+        if (stdin_active) {
+            return;
+        }
+
         if (released) {
             return;
         }
@@ -1214,12 +1324,103 @@ void terminal_keyboard_scancode(
         }
     }
 
-    if (released) {
-        return;
+    {
+        unsigned char code =
+            (unsigned char)(scancode & 0x7FU);
+
+        if (released) {
+            if (code < sizeof(key_down)) {
+                /*
+                 * Do not immediately clear key_down. If the host emitted
+                 * a synthetic break as part of autorepeat, the next make
+                 * must still be treated as the same held key.
+                 */
+                key_last_event_tick[code] = timer_ticks;
+            }
+            return;
+        }
+
+        if (code < sizeof(key_down)) {
+            unsigned int now = timer_ticks;
+
+            if (key_down[code]) {
+                /*
+                 * Another make/break packet arrived before the quiet
+                 * interval elapsed: treat it as autorepeat noise.
+                 */
+                if (now - key_last_event_tick[code] <
+                    TERMINAL_KEY_REPEAT_QUIET_TICKS) {
+                    key_last_event_tick[code] = now;
+                    return;
+                }
+
+                /*
+                 * Enough time passed since the previous event. The
+                 * previous logical press is over, so this make starts
+                 * a fresh press.
+                 */
+                key_down[code] = 0;
+            }
+
+            key_down[code] = 1;
+            key_last_event_tick[code] = now;
+        }
     }
 
     if (scancode == 0x3AU) {
         caps_lock = !caps_lock;
+        return;
+    }
+
+    if (stdin_active) {
+        if (ctrl_down &&
+            scancode == 0x2EU) {
+            terminal_stdin_push(3U);
+            return;
+        }
+
+        if (scancode == 0x1CU) {
+            terminal_stdin_push(10U);
+            print_char(10, 0x07);
+            return;
+        }
+
+        if (scancode == 0x0EU) {
+            terminal_stdin_push(8U);
+            print_char(8, 0x07);
+            return;
+        }
+
+        if (scancode == 0x0FU) {
+            terminal_stdin_push(9U);
+            print_string("    ", 0x07);
+            return;
+        }
+
+        {
+            char character =
+                scancode_to_ascii(scancode);
+            unsigned char value =
+                (unsigned char)character;
+
+            if (value >= 0x20U &&
+                value <= 0x7EU) {
+                terminal_stdin_push(value);
+                print_char(character, 0x07);
+            } else if (
+                language_layout &&
+                (
+                    (value >= 0x80U && value <= 0xAFU) ||
+                    (value >= 0xE0U && value <= 0xEFU) ||
+                    value == 0xF0U ||
+                    value == 0xF1U
+                )
+            ) {
+                terminal_stdin_push(value);
+                print_char(character, 0x07);
+            }
+        }
+
         return;
     }
 
@@ -1421,11 +1622,19 @@ void terminal_init(void) {
     caps_lock = 0;
     language_layout = 0;
     layout_switch_latch = 0;
+    for (unsigned int i = 0; i < sizeof(key_down); i++) {
+        key_down[i] = 0;
+        key_last_event_tick[i] = 0;
+    }
     command_buffer[0] = 0;
     tab_handler = 0;
     scrollback_count = 0;
     scrollback_start = 0;
     view_offset = 0;
+    stdin_active = 0;
+    stdin_head = 0;
+    stdin_tail = 0;
+    stdin_count = 0;
     for (unsigned int i = 0;
          i < TERMINAL_HEIGHT * TERMINAL_WIDTH;
          i++) {
@@ -1458,4 +1667,32 @@ const char* terminal_layout_name(void) {
     return language_layout
         ? "RU"
         : "EN";
+}
+
+
+void terminal_set_stdin_active(int active) {
+    terminal_stdin_reset();
+
+    /*
+     * Keep key state across shell <-> stdin transitions. Resetting it
+     * here would turn a held host key into a fresh character as soon
+     * as the user process exits.
+     */
+    stdin_active = active ? 1 : 0;
+}
+
+int terminal_read_stdin(
+    void* buffer,
+    unsigned int length
+) {
+    if (!stdin_active ||
+        !buffer ||
+        length == 0U) {
+        return 0;
+    }
+
+    return terminal_stdin_pop(
+        (unsigned char*)buffer,
+        length
+    );
 }

@@ -2,7 +2,46 @@
 
 Учебная 32-битная x86 ОС.
 
-## Текущий этап — Phase 25.4
+## Текущий этап — Phase 27.1
+
+Phase 27.1 добавляет единый host-side механизм установки внешнего содержимого в persistent-диск Michael OS.
+
+Ubuntu используется как условный дисковод: до запуска QEMU host-инструмент берёт файл или каталог и записывает его непосредственно в michaelos.disk. После загрузки Michael OS видит результат как обычное дерево DiskFS/VFS.
+
+Команда:
+
+~~~text
+$ make disk-install FILE=<host-file-or-directory> DEST=/path/in/Michael-OS
+~~~
+
+Поддерживаются:
+
+- обычный файл;
+- рекурсивное копирование каталога;
+- пустые каталоги;
+- автоматическое распознавание ELF32;
+- проверка ELF32 тем же форматом, который понимает загрузчик Michael OS;
+- автоматическая установка executable-флага для корректного ELF.
+
+Примеры:
+
+~~~text
+$ make disk-install FILE=notes.txt DEST=/docs/notes.txt
+$ make disk-install FILE=MyApp DEST=/apps/MyApp
+$ make disk-install FILE=build/my_program.elf DEST=/bin/my_program.elf
+
+$ make run
+...
+C:\\> ls /apps/MyApp
+C:\\> run /bin/my_program.elf
+~~~
+
+Для каталога дерево сливается с уже существующим: новые каталоги создаются, существующие переиспользуются, совпадающие файлы перезаписываются. Символические ссылки и специальные host-файлы отклоняются.
+
+Существующие disk-import и elf-install сохранены и продолжают выполнять свои узкие задачи.
+
+Ограничения текущего DiskFS не меняются: 128 inode, 16 MiB на образ и максимум 64 KiB на один файл с одним непрерывным data extent. Увеличение ёмкости и фрагментированных файлов — отдельная следующая подфаза.
+
 
 Phase 25.2 делает DiskFS доступным для внешних инструментов на host-машине. Теперь файлы можно импортировать в существующий `michaelos.disk` без запуска Michael OS и без встраивания файла в kernel image.
 
@@ -62,6 +101,44 @@ Phase 25.1 добавляет проверку целостности DiskFS п�
 `chkdsk`
 
 Они показывают состояние текущего DiskFS, число занятых inode, реально отмеченных bitmap data sectors, секторов, на которые действительно ссылаются файлы, и число найденных ошибок.
+
+## Phase 26.1: Standard Streams
+
+Phase 26.1 превращает стандартный ввод и вывод пользовательского процесса в часть общей модели файловых дескрипторов.
+
+У каждого нового Ring 3 процесса теперь изначально есть:
+
+- `fd 0` — `stdin`;
+- `fd 1` — `stdout`;
+- `fd 2` — `stderr`.
+
+Обычные файлы начинаются с `fd 3`, поэтому открытие `/worker1.txt` больше не может случайно занять стандартный дескриптор.
+
+Добавлены:
+
+- типизированная таблица process file descriptors;
+- `SYS_READ` для чтения через дескриптор;
+- `SYS_FD_WRITE` для записи через дескриптор;
+- консольный `stdin` как отдельная 512-байтная очередь клавиатурного ввода;
+- `stdout` и `stderr` как консольные дескрипторы;
+- встроенная `install-stdio-test` для проверки `stdin`/`stdout`;
+- миграция демонстрационных ELF-программ на `stdout fd=1`.
+
+Пример:
+
+~~~text
+C:\\> install-stdio-test
+Installed /bin/stdio-test.elf (... bytes).
+
+C:\\> run /bin/stdio-test.elf
+[stdio-test] Type a line and press Enter: Hello
+[stdin fd=0] read: Hello
+[run] process 1 exited.
+~~~
+
+`SYS_READ` в этой фазе намеренно неблокирующий: при отсутствии данных он возвращает `0`, а программа может добровольно вызвать `SYS_YIELD`. Блокирующее состояние процесса и `sleep()` остаются следующим слоем scheduler.
+
+Старый `SYS_WRITE` сохраняется как совместимый legacy-интерфейс. `SYS_READ` и `SYS_FD_WRITE` работают через единую таблицу дескрипторов: для консоли используются `0/1/2`, а обычные VFS-файлы получают `fd >= 3`.
 
 ### Phase 25.1: DiskFS Integrity and Safe Mount
 
@@ -991,6 +1068,7 @@ usertest
 diskinfo
 install-demo
 install-exec-test
+install-stdio-test
 run <path>
 
 layout [en|ru]
@@ -1093,6 +1171,8 @@ User-процессы используют:
 | 7 | SYS_FILE_WRITE |
 | 8 | SYS_CLOSE |
 | 9 | SYS_EXEC |
+| 10 | SYS_READ |
+| 11 | SYS_FD_WRITE |
 
 Команда:
 
@@ -1184,9 +1264,9 @@ C:\\> cd test/
 ~~~
 
 Версия проекта — `0.24.7`.
-## Версия 25.2
+## Текущая версия
 
-Текущая версия проекта — `0.25.2`.
+Текущая версия проекта — `0.26.1`.
 
 ## Сборка
 
@@ -1216,7 +1296,7 @@ make check
 - полноценного user malloc/free;
 - динамического линкера;
 - shared libraries;
-- настоящего terminal device;
+- полноценная terminal device модель с блокирующими reads;
 - device filesystem;
 - pipes;
 - нормальной файловой модели Unix;
@@ -1246,7 +1326,7 @@ Phase 16 превращает DiskFS из хранилища данных в и�
 
 - `fork()`;
 - расширению `exec()` для передачи `argv` / `envp`;
-- stdin / stdout / stderr как настоящим файловым дескрипторам;
+- полноценного user-level pipe/redirect интерфейса;
 - blocked processes и `sleep()`;
 - user-space runtime / libc-подобной библиотеке;
 - framebuffer и графической подсистеме.

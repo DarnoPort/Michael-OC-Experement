@@ -1,4 +1,5 @@
 #include "syscalls.h"
+#include "terminal.h"
 #include "memory.h"
 #include "paging.h"
 #include "process.h"
@@ -318,6 +319,147 @@ int syscall_dispatch(void* registers_ptr) {
         }
 
         registers->eax = length;
+        return 0;
+    }
+
+    if (registers->eax == SYS_READ) {
+        unsigned int directory =
+            scheduler_current_cr3();
+        unsigned int destination =
+            registers->ecx;
+        unsigned int remaining =
+            registers->edx;
+        unsigned char buffer[256];
+        unsigned int total = 0;
+
+        if (remaining == 0U ||
+            remaining > 4096U ||
+            !paging_user_range_valid_in_directory(
+                directory,
+                destination,
+                remaining,
+                1
+            )) {
+            registers->eax = 0xFFFFFFFFU;
+            return 0;
+        }
+
+        while (remaining > 0U) {
+            unsigned int chunk =
+                remaining > sizeof(buffer)
+                    ? sizeof(buffer)
+                    : remaining;
+            int result =
+                process_fd_read(
+                    (int)registers->ebx,
+                    buffer,
+                    chunk
+                );
+
+            if (result < 0) {
+                registers->eax =
+                    total == 0U
+                        ? 0xFFFFFFFFU
+                        : total;
+                return 0;
+            }
+
+            if (result == 0) {
+                break;
+            }
+
+            if (!paging_write_user_memory(
+                    directory,
+                    destination + total,
+                    buffer,
+                    (unsigned int)result
+                )) {
+                registers->eax =
+                    total == 0U
+                        ? 0xFFFFFFFFU
+                        : total;
+                return 0;
+            }
+
+            total += (unsigned int)result;
+            remaining -= (unsigned int)result;
+
+            if ((unsigned int)result < chunk) {
+                break;
+            }
+        }
+
+        registers->eax = total;
+        return 0;
+    }
+
+    if (registers->eax == SYS_FD_WRITE) {
+        unsigned int directory =
+            scheduler_current_cr3();
+        unsigned int source =
+            registers->ecx;
+        unsigned int remaining =
+            registers->edx;
+        unsigned char buffer[256];
+        unsigned int total = 0;
+
+        if (remaining == 0U ||
+            remaining > 4096U ||
+            !paging_user_range_valid_in_directory(
+                directory,
+                source,
+                remaining,
+                0
+            )) {
+            registers->eax = 0xFFFFFFFFU;
+            return 0;
+        }
+
+        while (remaining > 0U) {
+            unsigned int chunk =
+                remaining > sizeof(buffer)
+                    ? sizeof(buffer)
+                    : remaining;
+
+            if (!paging_read_user_memory(
+                    directory,
+                    source + total,
+                    buffer,
+                    chunk
+                )) {
+                registers->eax =
+                    total == 0U
+                        ? 0xFFFFFFFFU
+                        : total;
+                return 0;
+            }
+
+            {
+                int result =
+                    process_fd_write(
+                        (int)registers->ebx,
+                        buffer,
+                        chunk
+                    );
+
+                if (result < 0) {
+                    registers->eax =
+                        total == 0U
+                            ? 0xFFFFFFFFU
+                            : total;
+                    return 0;
+                }
+
+                total += (unsigned int)result;
+                remaining -= (unsigned int)result;
+
+                if ((unsigned int)result < chunk) {
+                    break;
+                }
+            }
+        }
+
+        registers->eax = total;
         return 0;
     }
 

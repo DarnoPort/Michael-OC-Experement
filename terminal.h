@@ -35,4 +35,10 @@ void terminal_set_layout(int layout);
 int terminal_get_layout(void);
 const char* terminal_layout_name(void);
 
+void terminal_set_stdin_active(int active);
+int terminal_read_stdin(
+    void* buffer,
+    unsigned int length
+);
+
 #endif

@@ -4,6 +4,7 @@
 
 SYS_EXIT  equ 0
 SYS_WRITE equ 1
+SYS_FD_WRITE equ 11
 SYS_EXEC  equ 9
 
 section .text
@@ -21,9 +22,10 @@ user_program_start:
     int 0x80
 
     ; exec() only returns on failure.
-    mov eax, SYS_WRITE
-    mov ebx, fail_message
-    mov ecx, fail_message_end - fail_message
+    mov eax, SYS_FD_WRITE
+    mov ebx, 1
+    mov ecx, fail_message
+    mov edx, fail_message_end - fail_message
     int 0x80
 
     mov eax, SYS_EXIT

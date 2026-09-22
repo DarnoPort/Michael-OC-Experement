@@ -9,6 +9,7 @@
 
 SYS_EXIT  equ 0
 SYS_WRITE equ 1
+SYS_FD_WRITE equ 11
 
 section .text
 global user_program_start
@@ -79,16 +80,23 @@ write_cstr:
     inc ecx
     jmp .count
 .count_done:
-    mov eax, SYS_WRITE
-    mov ebx, esi
+    mov edx, ecx
+    mov eax, SYS_FD_WRITE
+    mov ebx, 1
+    mov ecx, esi
     int 0x80
     popad
     ret
 
 ; EBX = pointer, ECX = byte count.
 write_buffer:
-    mov eax, SYS_WRITE
+    pushad
+    mov edx, ecx
+    mov ecx, ebx
+    mov ebx, 1
+    mov eax, SYS_FD_WRITE
     int 0x80
+    popad
     ret
 
 title:

@@ -1,2 +1,2 @@
 # Single source of truth for the visible Michael OS version.
-MICHAEL_OS_VERSION := 0.25.4
+MICHAEL_OS_VERSION := 0.27.1

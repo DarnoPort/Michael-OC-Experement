@@ -14,6 +14,8 @@ extern const unsigned char user_exec_image_start;
 extern const unsigned char user_exec_image_end;
 extern const unsigned char user_args_image_start;
 extern const unsigned char user_args_image_end;
+extern const unsigned char user_stdio_image_start;
+extern const unsigned char user_stdio_image_end;
 
 #define SHELL_FD_MAX 8
 
@@ -449,7 +451,8 @@ static void shell_completion_replace(const char* command, unsigned int token_sta
     if (!command || !replacement) return;
     while (length < token_start && command[length] != '\0') {
         if (length + 1U >= sizeof(result)) return;
-        result[length] = command[length++];
+        result[length] = command[length];
+        length++;
     }
     while (replacement[replacement_length] != '\0') {
         replacement_length++;
@@ -485,7 +488,8 @@ static void shell_complete_commands(const char* command, unsigned int length, un
         "cat", "copy", "ren", "rename", "move", "open", "read", "close",
         "rm", "del", "history", "ver", "dir", "type", "diskinfo", "run",
         "layout", "fstest", "install-demo", "install-exec-test",
-        "install-args-test", "clear", "cls", "uptime", "ticks", "meminfo",
+        "install-args-test", "install-stdio-test", "clear", "cls", "uptime",
+        "ticks", "meminfo",
         "physinfo", "memtest", "paging", "vmtest", "pfault", "ps",
         "usertest", "sleep"
     };
@@ -528,7 +532,8 @@ static void shell_complete_path(const char* command, unsigned int token_start) {
     unsigned int match_count = 0;
 
     while (token[partial_length] != '\0' && partial_length + 1U < sizeof(partial)) {
-        partial[partial_length] = token[partial_length++];
+        partial[partial_length] = token[partial_length];
+        partial_length++;
     }
     partial[partial_length] = '\0';
 
@@ -2230,6 +2235,8 @@ static void command_help(
         print_string("INSTALL-EXEC-TEST - installs the embedded exec() test ELF.\n", 0x0F);
     } else if (shell_command_name_is(topic, "install-args-test")) {
         print_string("INSTALL-ARGS-TEST - installs the embedded argc/argv test ELF.\n", 0x0F);
+    } else if (shell_command_name_is(topic, "install-stdio-test")) {
+        print_string("INSTALL-STDIO-TEST - installs the embedded stdin/stdout test ELF.\n", 0x0F);
     } else if (shell_command_name_is(topic, "meminfo") ||
                shell_command_name_is(topic, "physinfo") ||
                shell_command_name_is(topic, "memtest") ||
@@ -2633,6 +2640,122 @@ static int command_install_args_test(void) {
     return 1;
 }
 
+static int command_install_stdio_test(void) {
+    const unsigned char* image =
+        &user_stdio_image_start;
+    unsigned int image_size =
+        (unsigned int)(
+            &user_stdio_image_end -
+            &user_stdio_image_start
+        );
+    struct vfs_file* file;
+    unsigned int total = 0;
+
+    if (!vfs_lookup("/bin")) {
+        if (!vfs_mkdir("/bin")) {
+            print_error(
+                "install-stdio-test: ",
+                "cannot create /bin."
+            );
+            return 0;
+        }
+    }
+
+    if (vfs_lookup("/bin/stdio-test.elf")) {
+        print_error(
+            "install-stdio-test: ",
+            "/bin/stdio-test.elf already exists."
+        );
+        return 0;
+    }
+
+    file =
+        vfs_open(
+            "/bin/stdio-test.elf",
+            VFS_O_WRITE |
+            VFS_O_CREATE |
+            VFS_O_TRUNC
+        );
+
+    if (!file) {
+        print_error(
+            "install-stdio-test: ",
+            "cannot create executable."
+        );
+        return 0;
+    }
+
+    while (total < image_size) {
+        unsigned int remaining =
+            image_size - total;
+        unsigned int chunk =
+            remaining > 4096U
+                ? 4096U
+                : remaining;
+        int written =
+            vfs_write(
+                file,
+                image + total,
+                chunk
+            );
+
+        if (written <= 0 ||
+            (unsigned int)written > chunk) {
+            vfs_close(file);
+            (void)vfs_remove(
+                "/bin/stdio-test.elf"
+            );
+            print_error(
+                "install-stdio-test: ",
+                "failed while writing executable."
+            );
+            return 0;
+        }
+
+        total += (unsigned int)written;
+
+        if ((unsigned int)written < chunk &&
+            total < image_size) {
+            vfs_close(file);
+            (void)vfs_remove(
+                "/bin/stdio-test.elf"
+            );
+            print_error(
+                "install-stdio-test: ",
+                "executable write was truncated."
+            );
+            return 0;
+        }
+    }
+
+    vfs_close(file);
+
+    if (!vfs_set_executable(
+            "/bin/stdio-test.elf",
+            1
+        )) {
+        (void)vfs_remove(
+            "/bin/stdio-test.elf"
+        );
+        print_error(
+            "stdio-test: ",
+            "cannot mark executable."
+        );
+        return 0;
+    }
+
+    print_string(
+        "Installed /bin/stdio-test.elf (",
+        0x0A
+    );
+    print_uint(image_size, 0x0F);
+    print_string(
+        " bytes).\n",
+        0x0A
+    );
+    return 1;
+}
+
 int shell_init(void) {
     for (int fd = 0;
          fd < SHELL_FD_MAX;
@@ -2987,6 +3110,16 @@ int shell_handle_command(
         ) &&
         *skip_spaces(args) == '\0') {
         command_install_args_test();
+        return 1;
+    }
+
+    if (command_args(
+            command,
+            "install-stdio-test",
+            &args
+        ) &&
+        *skip_spaces(args) == '\0') {
+        command_install_stdio_test();
         return 1;
     }
 
