@@ -2337,8 +2337,7 @@ static int command_install_demo(void) {
     }
 
     print_string(
-        "Installed /bin/demo.elf ("
-
+        "Installed /bin/demo.elf (",
         0x0A
     );
     print_uint(image_size, 0x0F);
@@ -2503,8 +2502,7 @@ static int command_install_exec_test(void) {
     }
 
     print_string(
-        "Installed /bin/exec-test.elf ("
-
+        "Installed /bin/exec-test.elf (",
         0x0A
     );
     print_uint(image_size, 0x0F);
@@ -2614,8 +2612,7 @@ static int command_install_args_test(void) {
     }
 
     print_string(
-        "Installed /bin/args-test.elf ("
-
+        "Installed /bin/args-test.elf (",
         0x0A
     );
     print_uint(
