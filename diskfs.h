@@ -47,6 +47,17 @@ int diskfs_store_file(
 );
 int diskfs_truncate_file(unsigned int inode);
 
+struct diskfs_check_report {
+    unsigned int used_inodes;
+    unsigned int allocated_sectors;
+    unsigned int referenced_sectors;
+    unsigned int errors;
+};
+
+int diskfs_check(
+    struct diskfs_check_report* report
+);
+
 int diskfs_get_stats(
     unsigned int* total_sectors,
     unsigned int* free_sectors,
