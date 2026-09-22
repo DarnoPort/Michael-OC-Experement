@@ -1007,6 +1007,98 @@ static int command_rename(
 }
 
 
+static void shell_follow_moved_directory(
+    struct vfs_node* node,
+    const char* old_path
+) {
+    char new_path[VFS_PATH_MAX];
+    char updated_cwd[VFS_PATH_MAX];
+    unsigned int old_length;
+    unsigned int cwd_length;
+    unsigned int suffix_length;
+    unsigned int new_length;
+
+    if (!node ||
+        !old_path ||
+        !vfs_node_is_directory(node) ||
+        old_path[0] == '\0' ||
+        old_path[0] != '/') {
+        return;
+    }
+
+    /*
+     * shell_cwd is kept canonical by CD. We only rewrite it when
+     * it names the moved directory itself or a descendant of it.
+     * Prefix matching alone is not sufficient: /A must not match /AB.
+     */
+    old_length = shell_length(old_path);
+    cwd_length = shell_length(shell_cwd);
+
+    if (old_length <= 1U ||
+        cwd_length < old_length) {
+        return;
+    }
+
+    if (shell_cwd[0] != old_path[0]) {
+        return;
+    }
+
+    for (unsigned int i = 0;
+         i < old_length;
+         i++) {
+        if (shell_cwd[i] != old_path[i]) {
+            return;
+        }
+    }
+
+    if (cwd_length != old_length &&
+        shell_cwd[old_length] != '/') {
+        return;
+    }
+
+    if (!vfs_get_path(
+            node,
+            new_path,
+            sizeof(new_path)
+        )) {
+        return;
+    }
+
+    suffix_length = cwd_length - old_length;
+    new_length =
+        shell_length(new_path) +
+        suffix_length;
+
+    if (new_length >= VFS_PATH_MAX) {
+        return;
+    }
+
+    for (unsigned int i = 0;
+         i < shell_length(new_path);
+         i++) {
+        updated_cwd[i] = new_path[i];
+    }
+
+    for (unsigned int i = 0;
+         i < suffix_length;
+         i++) {
+        updated_cwd[
+            shell_length(new_path) + i
+        ] = shell_cwd[
+            old_length + i
+        ];
+    }
+
+    updated_cwd[new_length] = '\0';
+
+    shell_copy(
+        shell_cwd,
+        updated_cwd,
+        sizeof(shell_cwd)
+    );
+    shell_update_prompt();
+}
+
 static int command_move(
     const char* args
 ) {
@@ -1016,6 +1108,7 @@ static int command_move(
     char old_path[VFS_PATH_MAX];
     char new_path[VFS_PATH_MAX];
     char move_path[VFS_PATH_MAX];
+    char source_canonical[VFS_PATH_MAX];
     struct vfs_node* source_node;
     struct vfs_node* destination_node;
     unsigned int destination_length;
@@ -1123,6 +1216,18 @@ static int command_move(
         }
     }
 
+    if (!vfs_get_path(
+            source_node,
+            source_canonical,
+            sizeof(source_canonical)
+        )) {
+        print_error(
+            "move: ",
+            "cannot resolve source path."
+        );
+        return 1;
+    }
+
     if (!vfs_move(
             old_path,
             new_path
@@ -1133,6 +1238,11 @@ static int command_move(
         );
         return 1;
     }
+
+    shell_follow_moved_directory(
+        source_node,
+        source_canonical
+    );
 
     print_string(
         "Moved ",
