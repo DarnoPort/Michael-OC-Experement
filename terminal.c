@@ -37,6 +37,11 @@ static int caps_lock = 0;
 static int language_layout = 0;
 static int layout_switch_latch = 0;
 
+/* Track physical key state so hardware typematic repeats do not
+ * become duplicate input bytes. Explicit key repeats can be added
+ * later as a terminal feature with controlled timing. */
+static unsigned char key_down[128];
+
 static unsigned char vga_font_buffer[256U * 32U];
 
 struct terminal_cell {
@@ -1305,8 +1310,24 @@ void terminal_keyboard_scancode(
         }
     }
 
-    if (released) {
-        return;
+    {
+        unsigned char code =
+            (unsigned char)(scancode & 0x7FU);
+
+        if (released) {
+            if (code < sizeof(key_down)) {
+                key_down[code] = 0;
+            }
+            return;
+        }
+
+        if (code < sizeof(key_down)) {
+            if (key_down[code]) {
+                return;
+            }
+
+            key_down[code] = 1;
+        }
     }
 
     if (scancode == 0x3AU) {
@@ -1564,6 +1585,9 @@ void terminal_init(void) {
     caps_lock = 0;
     language_layout = 0;
     layout_switch_latch = 0;
+    for (unsigned int i = 0; i < sizeof(key_down); i++) {
+        key_down[i] = 0;
+    }
     command_buffer[0] = 0;
     tab_handler = 0;
     scrollback_count = 0;
@@ -1610,6 +1634,12 @@ const char* terminal_layout_name(void) {
 
 void terminal_set_stdin_active(int active) {
     terminal_stdin_reset();
+
+    /* A new input session starts with no keys logically held. */
+    for (unsigned int i = 0; i < sizeof(key_down); i++) {
+        key_down[i] = 0;
+    }
+
     stdin_active = active ? 1 : 0;
 }
 
