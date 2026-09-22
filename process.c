@@ -3,6 +3,7 @@
 #include "paging.h"
 #include "elf.h"
 #include "vfs.h"
+#include "terminal.h"
 
 extern void print_char(char c, unsigned char color);
 extern void print_string(const char* str, unsigned char color);
@@ -319,6 +320,7 @@ void scheduler_init(void) {
         processes[i].saved_esp = 0;
         processes[i].started = 0;
         for (int fd = 0; fd < PROCESS_FD_MAX; fd++) {
+            processes[i].fd_kinds[fd] = PROCESS_FD_UNUSED;
             processes[i].files[fd] = 0;
         }
         processes[i].name[0] = '\0';
@@ -468,8 +470,13 @@ int process_create_from_image_with_args(
     }
 
     for (int fd = 0; fd < PROCESS_FD_MAX; fd++) {
+        process->fd_kinds[fd] = PROCESS_FD_UNUSED;
         process->files[fd] = 0;
     }
+
+    process->fd_kinds[PROCESS_FD_STDIN] = PROCESS_FD_STDIN_K;
+    process->fd_kinds[PROCESS_FD_STDOUT] = PROCESS_FD_STDOUT_K;
+    process->fd_kinds[PROCESS_FD_STDERR] = PROCESS_FD_STDERR_K;
 
     copy_string(
         process->name,
@@ -550,11 +557,14 @@ int process_run_image_with_args(
         return -1;
     }
 
+    terminal_set_stdin_active(1);
+
     enter_user_mode(
         scheduler_current_entry(),
         scheduler_current_stack_top()
     );
 
+    terminal_set_stdin_active(0);
     scheduler_cleanup();
     return pid;
 }
@@ -872,9 +882,14 @@ int process_fd_install(struct vfs_file* file) {
         return -1;
     }
 
-    for (int fd = 0; fd < PROCESS_FD_MAX; fd++) {
-        if (!processes[current_index].files[fd]) {
+    for (int fd = PROCESS_FD_FIRST_FILE;
+         fd < PROCESS_FD_MAX;
+         fd++) {
+        if (processes[current_index].fd_kinds[fd] ==
+            PROCESS_FD_UNUSED) {
             processes[current_index].files[fd] = file;
+            processes[current_index].fd_kinds[fd] =
+                PROCESS_FD_FILE;
             return fd;
         }
     }
@@ -886,15 +901,99 @@ struct vfs_file* process_fd_get(int fd) {
     if (!scheduler_active ||
         current_index < 0 ||
         !process_is_runnable(current_index) ||
-        fd < 0 ||
-        fd >= PROCESS_FD_MAX) {
+        fd < PROCESS_FD_FIRST_FILE ||
+        fd >= PROCESS_FD_MAX ||
+        processes[current_index].fd_kinds[fd] !=
+            PROCESS_FD_FILE) {
         return 0;
     }
 
     return processes[current_index].files[fd];
 }
 
+int process_fd_read(
+    int fd,
+    void* buffer,
+    unsigned int length
+) {
+    unsigned char kind;
+
+    if (!scheduler_active ||
+        current_index < 0 ||
+        !process_is_runnable(current_index) ||
+        fd < 0 ||
+        fd >= PROCESS_FD_MAX ||
+        !buffer ||
+        length == 0U) {
+        return -1;
+    }
+
+    kind = processes[current_index].fd_kinds[fd];
+
+    if (kind == PROCESS_FD_STDIN_K) {
+        return terminal_read_stdin(
+            buffer,
+            length
+        );
+    }
+
+    if (kind == PROCESS_FD_FILE) {
+        return vfs_read(
+            processes[current_index].files[fd],
+            buffer,
+            length
+        );
+    }
+
+    return -1;
+}
+
+int process_fd_write(
+    int fd,
+    const void* buffer,
+    unsigned int length
+) {
+    unsigned char kind;
+
+    if (!scheduler_active ||
+        current_index < 0 ||
+        !process_is_runnable(current_index) ||
+        fd < 0 ||
+        fd >= PROCESS_FD_MAX ||
+        !buffer ||
+        length == 0U) {
+        return -1;
+    }
+
+    kind = processes[current_index].fd_kinds[fd];
+
+    if (kind == PROCESS_FD_STDOUT_K ||
+        kind == PROCESS_FD_STDERR_K) {
+        for (unsigned int i = 0; i < length; i++) {
+            print_char(
+                ((const char*)buffer)[i],
+                kind == PROCESS_FD_STDERR_K
+                    ? 0x0C
+                    : 0x0F
+            );
+        }
+
+        return (int)length;
+    }
+
+    if (kind == PROCESS_FD_FILE) {
+        return vfs_write(
+            processes[current_index].files[fd],
+            buffer,
+            length
+        );
+    }
+
+    return -1;
+}
+
 int process_fd_close(int fd) {
+    unsigned char kind;
     struct vfs_file* file;
 
     if (!scheduler_active ||
@@ -905,14 +1004,23 @@ int process_fd_close(int fd) {
         return 0;
     }
 
-    file = processes[current_index].files[fd];
+    kind = processes[current_index].fd_kinds[fd];
 
-    if (!file) {
+    if (kind == PROCESS_FD_UNUSED) {
         return 0;
     }
 
+    file = processes[current_index].files[fd];
+
     processes[current_index].files[fd] = 0;
-    return vfs_close(file);
+    processes[current_index].fd_kinds[fd] =
+        PROCESS_FD_UNUSED;
+
+    if (kind == PROCESS_FD_FILE) {
+        return vfs_close(file);
+    }
+
+    return 1;
 }
 
 int process_sbrk(
