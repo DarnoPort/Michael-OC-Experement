@@ -37,16 +37,22 @@ static int caps_lock = 0;
 static int language_layout = 0;
 static int layout_switch_latch = 0;
 
-/* Track physical key state so hardware typematic repeats do not
- * become duplicate input bytes. Explicit key repeats can be added
- * later as a terminal feature with controlled timing. */
+/*
+ * Track the logical state of each ordinary key independently of the
+ * individual make/break packets. Some host/QEMU input paths can turn
+ * host autorepeat into make/break/make cycles. Those cycles must not
+ * become repeated terminal input bytes.
+ *
+ * A key remains logically held until there has been a quiet interval.
+ * A new make after that quiet interval starts a new logical press.
+ * This keeps the normal PS/2 make-only typematic stream working while
+ * also filtering emulated make/break/make repeats.
+ */
 static unsigned char key_down[128];
-static unsigned int key_last_accept_tick[128];
+static unsigned int key_last_event_tick[128];
 
-/* Ignore unrealistically fast make/break/make cycles. Some emulated
- * PS/2 paths can represent typematic as a full make+break pair rather
- * than a repeated make code. At 100 Hz this gives a 50 ms guard. */
-#define TERMINAL_KEY_REPEAT_GUARD_TICKS 5U
+/* PIT runs at 100 Hz, so 15 ticks = 150 ms. */
+#define TERMINAL_KEY_REPEAT_QUIET_TICKS 15U
 
 extern volatile unsigned int timer_ticks;
 
@@ -1324,7 +1330,12 @@ void terminal_keyboard_scancode(
 
         if (released) {
             if (code < sizeof(key_down)) {
-                key_down[code] = 0;
+                /*
+                 * Do not immediately clear key_down. If the host emitted
+                 * a synthetic break as part of autorepeat, the next make
+                 * must still be treated as the same held key.
+                 */
+                key_last_event_tick[code] = timer_ticks;
             }
             return;
         }
@@ -1333,17 +1344,26 @@ void terminal_keyboard_scancode(
             unsigned int now = timer_ticks;
 
             if (key_down[code]) {
-                return;
-            }
+                /*
+                 * Another make/break packet arrived before the quiet
+                 * interval elapsed: treat it as autorepeat noise.
+                 */
+                if (now - key_last_event_tick[code] <
+                    TERMINAL_KEY_REPEAT_QUIET_TICKS) {
+                    key_last_event_tick[code] = now;
+                    return;
+                }
 
-            if (now - key_last_accept_tick[code] <
-                TERMINAL_KEY_REPEAT_GUARD_TICKS) {
-                key_down[code] = 1;
-                return;
+                /*
+                 * Enough time passed since the previous event. The
+                 * previous logical press is over, so this make starts
+                 * a fresh press.
+                 */
+                key_down[code] = 0;
             }
 
             key_down[code] = 1;
-            key_last_accept_tick[code] = now;
+            key_last_event_tick[code] = now;
         }
     }
 
@@ -1604,8 +1624,7 @@ void terminal_init(void) {
     layout_switch_latch = 0;
     for (unsigned int i = 0; i < sizeof(key_down); i++) {
         key_down[i] = 0;
-        key_last_accept_tick[i] =
-            0xFFFFFFFFU;
+        key_last_event_tick[i] = 0;
     }
     command_buffer[0] = 0;
     tab_handler = 0;
@@ -1654,13 +1673,11 @@ const char* terminal_layout_name(void) {
 void terminal_set_stdin_active(int active) {
     terminal_stdin_reset();
 
-    /* A new input session starts with no keys logically held. */
-    for (unsigned int i = 0; i < sizeof(key_down); i++) {
-        key_down[i] = 0;
-        key_last_accept_tick[i] =
-            0xFFFFFFFFU;
-    }
-
+    /*
+     * Keep key state across shell <-> stdin transitions. Resetting it
+     * here would turn a held host key into a fresh character as soon
+     * as the user process exits.
+     */
     stdin_active = active ? 1 : 0;
 }
 
