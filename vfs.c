@@ -480,7 +480,6 @@ static int load_disk_tree(void) {
         }
 
         node =
-            node =
             allocate_node(
                 inode,
                 info.type,
