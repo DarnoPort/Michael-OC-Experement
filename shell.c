@@ -14,6 +14,8 @@ extern const unsigned char user_exec_image_start;
 extern const unsigned char user_exec_image_end;
 extern const unsigned char user_args_image_start;
 extern const unsigned char user_args_image_end;
+extern const unsigned char user_stdio_image_start;
+extern const unsigned char user_stdio_image_end;
 
 #define SHELL_FD_MAX 8
 
@@ -485,7 +487,8 @@ static void shell_complete_commands(const char* command, unsigned int length, un
         "cat", "copy", "ren", "rename", "move", "open", "read", "close",
         "rm", "del", "history", "ver", "dir", "type", "diskinfo", "run",
         "layout", "fstest", "install-demo", "install-exec-test",
-        "install-args-test", "clear", "cls", "uptime", "ticks", "meminfo",
+        "install-args-test", "install-stdio-test", "clear", "cls", "uptime",
+        "ticks", "meminfo",
         "physinfo", "memtest", "paging", "vmtest", "pfault", "ps",
         "usertest", "sleep"
     };
@@ -2628,6 +2631,123 @@ static int command_install_args_test(void) {
     );
     print_string(
         " bytes).\n",
+        0x0A
+    );
+    return 1;
+}
+
+static int command_install_stdio_test(void) {
+    const unsigned char* image =
+        &user_stdio_image_start;
+    unsigned int image_size =
+        (unsigned int)(
+            &user_stdio_image_end -
+            &user_stdio_image_start
+        );
+    struct vfs_file* file;
+    unsigned int total = 0;
+
+    if (!vfs_lookup("/bin")) {
+        if (!vfs_mkdir("/bin")) {
+            print_error(
+                "install-stdio-test: ",
+                "cannot create /bin."
+            );
+            return 0;
+        }
+    }
+
+    if (vfs_lookup("/bin/stdio-test.elf")) {
+        print_error(
+            "install-stdio-test: ",
+            "/bin/stdio-test.elf already exists."
+        );
+        return 0;
+    }
+
+    file =
+        vfs_open(
+            "/bin/stdio-test.elf",
+            VFS_O_WRITE |
+            VFS_O_CREATE |
+            VFS_O_TRUNC
+        );
+
+    if (!file) {
+        print_error(
+            "install-stdio-test: ",
+            "cannot create executable."
+        );
+        return 0;
+    }
+
+    while (total < image_size) {
+        unsigned int remaining =
+            image_size - total;
+        unsigned int chunk =
+            remaining > 4096U
+                ? 4096U
+                : remaining;
+        int written =
+            vfs_write(
+                file,
+                image + total,
+                chunk
+            );
+
+        if (written <= 0 ||
+            (unsigned int)written > chunk) {
+            vfs_close(file);
+            (void)vfs_remove(
+                "/bin/stdio-test.elf"
+            );
+            print_error(
+                "install-stdio-test: ",
+                "failed while writing executable."
+            );
+            return 0;
+        }
+
+        total += (unsigned int)written;
+
+        if ((unsigned int)written < chunk &&
+            total < image_size) {
+            vfs_close(file);
+            (void)vfs_remove(
+                "/bin/stdio-test.elf"
+            );
+            print_error(
+                "install-stdio-test: ",
+                "executable write was truncated."
+            );
+            return 0;
+        }
+    }
+
+    vfs_close(file);
+
+    if (!vfs_set_executable(
+            "/bin/stdio-test.elf",
+            1
+        )) {
+        (void)vfs_remove(
+            "/bin/stdio-test.elf"
+        );
+        print_error(
+            "stdio-test: ",
+            "cannot mark executable."
+        );
+        return 0;
+    }
+
+    print_string(
+        "Installed /bin/stdio-test.elf (",
+        0x0A
+    );
+    print_uint(image_size, 0x0F);
+    print_string(
+        " bytes).
+",
         0x0A
     );
     return 1;
