@@ -353,37 +353,131 @@ static unsigned int input_text_length(void) {
     return length;
 }
 
-static void redraw_input(void) {
-    unsigned int max_length =
-        TERMINAL_WIDTH - prompt_col;
+static void input_position_for_index(
+    unsigned int index,
+    unsigned int* row,
+    unsigned int* col
+) {
+    unsigned int first_width;
 
-    if (max_length > 0U) {
-        max_length--;
+    if (!row || !col) {
+        return;
     }
 
-    for (unsigned int i = 0;
-         i < max_length;
-         i++) {
-        char value = ' ';
+    first_width =
+        TERMINAL_WIDTH - prompt_col;
 
-        if (i < command_length) {
-            value = command_buffer[i];
+    if (index < first_width) {
+        *row = prompt_row;
+        *col = prompt_col + index;
+        return;
+    }
+
+    index -= first_width;
+
+    *row =
+        prompt_row +
+        1U +
+        index / TERMINAL_WIDTH;
+    *col =
+        index % TERMINAL_WIDTH;
+}
+
+static void redraw_input(void) {
+    unsigned int end_row;
+    unsigned int end_col;
+    unsigned int clear_length;
+    unsigned int old_length;
+
+    input_position_for_index(
+        command_length,
+        &end_row,
+        &end_col
+    );
+
+    /*
+     * Keep the whole editable command and the cursor visible.
+     * TERMINAL_INPUT_MAX is deliberately small enough that a
+     * single command can never require more than a few scrolls.
+     */
+    while (end_row >= TERMINAL_HEIGHT) {
+        scroll_screen();
+
+        if (prompt_row > 0U) {
+            prompt_row--;
+        }
+
+        input_position_for_index(
+            command_length,
+            &end_row,
+            &end_col
+        );
+    }
+
+    old_length = command_length;
+    clear_length = old_length + 1U;
+
+    /*
+     * Clear the old rendered tail as well. The extra cell after
+     * the command is the cursor cell, so shrinking a wrapped line
+     * cannot leave stale characters behind.
+     */
+    for (unsigned int i = 0;
+         i < clear_length;
+         i++) {
+        unsigned int row;
+        unsigned int col;
+
+        input_position_for_index(
+            i,
+            &row,
+            &col
+        );
+
+        if (row >= TERMINAL_HEIGHT) {
+            break;
         }
 
         vga_buffer[
-            prompt_row * TERMINAL_WIDTH +
-            prompt_col + i
+            row * TERMINAL_WIDTH + col
         ] =
-            (unsigned short)(unsigned char)value |
-            ((i < command_length ? 0x0F : 0x07) << 8);
+            (unsigned short)' ' |
+            (0x07 << 8);
     }
 
-    term_row = prompt_row;
-    term_col = prompt_col + cursor_index;
+    /*
+     * Redraw the complete command from the prompt position.
+     * The first line starts after the prompt; following lines
+     * use the full 80-column terminal width.
+     */
+    for (unsigned int i = 0;
+         i < command_length;
+         i++) {
+        unsigned int row;
+        unsigned int col;
 
-    if (term_col >= TERMINAL_WIDTH) {
-        term_col = TERMINAL_WIDTH - 1U;
+        input_position_for_index(
+            i,
+            &row,
+            &col
+        );
+
+        if (row >= TERMINAL_HEIGHT) {
+            break;
+        }
+
+        vga_buffer[
+            row * TERMINAL_WIDTH + col
+        ] =
+            (unsigned short)(unsigned char)command_buffer[i] |
+            (0x0F << 8);
     }
+
+    input_position_for_index(
+        cursor_index,
+        &term_row,
+        &term_col
+    );
 
     terminal_update_cursor();
 }
@@ -466,15 +560,7 @@ static void load_history(int position) {
 }
 
 static void insert_character(char c) {
-    unsigned int available =
-        TERMINAL_WIDTH - prompt_col;
-
-    if (available > 0U) {
-        available--;
-    }
-
-    if (cursor_index >= available ||
-        command_length >= TERMINAL_INPUT_MAX - 1U) {
+    if (command_length >= TERMINAL_INPUT_MAX - 1U) {
         return;
     }
 
@@ -933,9 +1019,33 @@ void terminal_keyboard_scancode(
     }
 
     if (scancode == 0x1CU) {
+        unsigned int row;
+        unsigned int col;
+
         command_buffer[command_length] = 0;
         command_ready = 1;
-        print_char(10, 0x07);
+
+        /*
+         * Enter always moves to the end of the visible command.
+         * If the last typed character already wrapped at column 80,
+         * the cursor is already on the next line and another newline
+         * would create an unwanted blank line.
+         */
+        input_position_for_index(
+            command_length,
+            &row,
+            &col
+        );
+
+        term_row = row;
+        term_col = col;
+
+        if (term_col != 0U) {
+            print_char(10, 0x07);
+        } else {
+            terminal_update_cursor();
+        }
+
         return;
     }
 
