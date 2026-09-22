@@ -20,7 +20,7 @@ CFLAGS := -m32 -std=gnu99 -ffreestanding -fno-pie -fno-stack-protector -fno-asyn
 LDFLAGS := -m elf_i386 -T linker.ld
 OBJS := $(BUILD)/boot.o $(BUILD)/interrupts.o $(BUILD)/kernel.o $(BUILD)/terminal.o $(BUILD)/terminal_font.o $(BUILD)/memory.o $(BUILD)/paging.o $(BUILD)/process.o $(BUILD)/elf_loader.o $(BUILD)/syscalls.o $(BUILD)/ata.o $(BUILD)/diskfs.o $(BUILD)/vfs.o $(BUILD)/shell.o $(BUILD)/user_image.o $(BUILD)/user_exec_image.o $(BUILD)/user_args_image.o $(BUILD)/user_stdio_image.o
 
-.PHONY: all iso disk disk-reset disk-import disk-export disk-ls elf-install elf-check disk-elf-check run check clean
+.PHONY: all iso disk disk-reset disk-import disk-install disk-export disk-ls elf-install elf-check disk-elf-check run check clean
 
 all: $(TARGET)
 
@@ -147,10 +147,15 @@ disk-elf-check:
 	@test -n "$(SRC)" || (echo "Usage: make disk-elf-check SRC=/bin/program.elf"; exit 1)
 	python3 tools/diskfs_host.py --disk "$(DISK)" disk-elf-check "$(SRC)"
 
-disk-import:
+disk-import: disk
 	@test -n "$(FILE)" || (echo "Usage: make disk-import FILE=host_file DEST=/disk/path"; exit 1)
 	@test -n "$(DEST)" || (echo "Usage: make disk-import FILE=host_file DEST=/disk/path"; exit 1)
 	python3 tools/diskfs_host.py --disk "$(DISK)" import "$(FILE)" "$(DEST)"
+
+disk-install: disk
+	@test -n "$(FILE)" || (echo "Usage: make disk-install FILE=host_file_or_dir DEST=/disk/path"; exit 1)
+	@test -n "$(DEST)" || (echo "Usage: make disk-install FILE=host_file_or_dir DEST=/disk/path"; exit 1)
+	python3 tools/diskfs_host.py --disk "$(DISK)" install "$(FILE)" "$(DEST)"
 
 disk-export: disk
 	@test -n "$(SRC)" || (echo "Usage: make disk-export SRC=/disk/path FILE=host_file"; exit 1)
