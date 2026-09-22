@@ -70,12 +70,9 @@ static void terminal_update_cursor(void);
 static unsigned int terminal_irq_save(void) {
     unsigned int flags;
     asm volatile(
-        "pushfl
-"
-        "popl %0
-"
-        "cli
-"
+        "pushfl\n"
+        "popl %0\n"
+        "cli\n"
         : "=r"(flags)
     );
     return flags;
@@ -83,10 +80,8 @@ static unsigned int terminal_irq_save(void) {
 
 static void terminal_irq_restore(unsigned int flags) {
     asm volatile(
-        "pushl %0
-"
-        "popfl
-"
+        "pushl %0\n"
+        "popfl\n"
         :
         : "r"(flags)
         : "memory"
