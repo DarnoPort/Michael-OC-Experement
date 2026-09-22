@@ -20,7 +20,7 @@ CFLAGS := -m32 -std=gnu99 -ffreestanding -fno-pie -fno-stack-protector -fno-asyn
 LDFLAGS := -m elf_i386 -T linker.ld
 OBJS := $(BUILD)/boot.o $(BUILD)/interrupts.o $(BUILD)/kernel.o $(BUILD)/terminal.o $(BUILD)/terminal_font.o $(BUILD)/memory.o $(BUILD)/paging.o $(BUILD)/process.o $(BUILD)/elf_loader.o $(BUILD)/syscalls.o $(BUILD)/ata.o $(BUILD)/diskfs.o $(BUILD)/vfs.o $(BUILD)/shell.o $(BUILD)/user_image.o $(BUILD)/user_exec_image.o $(BUILD)/user_args_image.o
 
-.PHONY: all iso disk disk-reset disk-import disk-export disk-ls run check clean
+.PHONY: all iso disk disk-reset disk-import disk-export disk-ls elf-install elf-check disk-elf-check run check clean
 
 all: $(TARGET)
 
@@ -124,6 +124,19 @@ disk:
 
 disk-reset:
 	rm -f "$(DISK)" nanoos.disk
+
+elf-install:
+	@test -n "$(FILE)" || (echo "Usage: make elf-install FILE=host.elf DEST=/bin/program.elf"; exit 1)
+	@test -n "$(DEST)" || (echo "Usage: make elf-install FILE=host.elf DEST=/bin/program.elf"; exit 1)
+	python3 tools/diskfs_host.py --disk "$(DISK)" install-elf "$(FILE)" "$(DEST)"
+
+elf-check:
+	@test -n "$(FILE)" || (echo "Usage: make elf-check FILE=host.elf"; exit 1)
+	python3 tools/diskfs_host.py elf-check "$(FILE)"
+
+disk-elf-check:
+	@test -n "$(SRC)" || (echo "Usage: make disk-elf-check SRC=/bin/program.elf"; exit 1)
+	python3 tools/diskfs_host.py --disk "$(DISK)" disk-elf-check "$(SRC)"
 
 disk-import:
 	@test -n "$(FILE)" || (echo "Usage: make disk-import FILE=host_file DEST=/disk/path"; exit 1)
