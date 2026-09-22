@@ -13,6 +13,7 @@
 SYS_EXIT   equ 0
 SYS_WRITE  equ 1
 SYS_FD_WRITE equ 11
+SYS_READ equ 10
 SYS_GETPID equ 2
 SYS_YIELD  equ 3
 SYS_SBRK        equ 4
@@ -87,8 +88,8 @@ user_program_start:
 
     mov ebp, eax
 
-    ; Write the PID bytes through the file syscall.
-    mov eax, SYS_FILE_WRITE
+    ; Write the PID bytes through the generic file descriptor API.
+    mov eax, SYS_FD_WRITE
     mov ebx, ebp
     mov ecx, esi
     mov edx, 2
@@ -110,8 +111,8 @@ user_program_start:
 
     mov ebp, eax
 
-    ; Read the two bytes back into the private heap.
-    mov eax, SYS_FILE_READ
+    ; Read the two bytes back through the generic file descriptor API.
+    mov eax, SYS_READ
     mov ebx, ebp
     lea ecx, [esi + 2]
     mov edx, 2
