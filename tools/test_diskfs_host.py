@@ -73,12 +73,13 @@ def main() -> int:
             "/bin/hello.elf",
         )
         stored = diskfs_host.parse_elf32(payload)
-        diskfs_host.import_file(
+        image = diskfs_host.import_file(
             image,
             elf,
             "/bin/another.elf",
             diskfs_host.DISKFS_FLAG_EXECUTABLE,
         )
+        diskfs_host.atomic_write(disk, image)
         image = diskfs_host.load_image(disk)
 
         assert stored["entry"] == info["entry"]
