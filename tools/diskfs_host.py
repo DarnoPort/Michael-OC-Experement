@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Host-side tool for reading and modifying Michael OS DiskFS v1 images.
 
-This tool intentionally implements only the stable on-disk format used by
-Michael OS Phase 14 through Phase 25.2. It does not need the OS to be running.
+This tool intentionally implements the stable on-disk format used by
+Michael OS through Phase 25.4. It does not need the OS to be running.
 """
 
 from __future__ import annotations
@@ -406,6 +406,9 @@ def import_file(
 
     if flags & ~DISKFS_FLAG_SUPPORTED:
         raise DiskFSError("unsupported DiskFS flags")
+
+    if len(payload) > MAX_FILE_SIZE:
+        raise DiskFSError(
             f"source is {len(payload)} bytes; DiskFS maximum is {MAX_FILE_SIZE}"
         )
 
