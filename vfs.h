@@ -22,6 +22,7 @@ int vfs_init(void);
 struct vfs_node* vfs_root(void);
 struct vfs_node* vfs_lookup(const char* path);
 int vfs_node_is_directory(const struct vfs_node* node);
+int vfs_node_is_executable(const struct vfs_node* node);
 unsigned int vfs_node_size(const struct vfs_node* node);
 const char* vfs_node_name(const struct vfs_node* node);
 struct vfs_node* vfs_node_parent(const struct vfs_node* node);
@@ -35,6 +36,10 @@ int vfs_get_path(
 );
 
 int vfs_mkdir(const char* path);
+int vfs_set_executable(
+    const char* path,
+    int executable
+);
 int vfs_create_file(const char* path);
 int vfs_remove(const char* path);
 int vfs_rename(const char* old_path, const char* new_path);
