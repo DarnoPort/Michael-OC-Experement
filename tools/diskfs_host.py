@@ -260,6 +260,47 @@ def resolve_node(image: bytearray, path: str) -> int:
     return current
 
 
+def ensure_directory_path(image: bytearray, path: str) -> bytearray:
+    """
+    Create missing directory components in an absolute DiskFS path.
+    Existing file components are rejected. The root directory always exists.
+    """
+    if path == "/":
+        return image
+    parts = parse_disk_path(path)
+    current = 0
+
+    for part in parts:
+        existing = find_child(image, current, part)
+
+        if existing is not None:
+            inode = unpack_inode(image, existing)
+            if inode["type"] != NODE_DIR:
+                raise DiskFSError(
+                    f"path component is not a directory: {part!r}"
+                )
+            current = existing
+            continue
+
+        inode_number = find_free_inode(image)
+        write_inode(
+            image,
+            inode_number,
+            {
+                "used": 1,
+                "type": NODE_DIR,
+                "size": 0,
+                "data_start": 0,
+                "data_sectors": 0,
+                "parent": current,
+                "name": part,
+            },
+        )
+        current = inode_number
+
+    return image
+
+
 def resolve_parent(image: bytearray, path: str) -> tuple[int, bytes]:
     parts = parse_disk_path(path)
     leaf = parts[-1]
@@ -337,6 +378,13 @@ def import_file(image: bytearray, source: Path, destination: str) -> bytearray:
         raise DiskFSError(
             f"source is {len(payload)} bytes; DiskFS maximum is {MAX_FILE_SIZE}"
         )
+
+    destination_parts = parse_disk_path(destination)
+    parent_text = "/" + "/".join(
+        part.decode("utf-8") for part in destination_parts[:-1]
+    )
+    if parent_text != "/":
+        ensure_directory_path(image, parent_text)
 
     parent, name = resolve_parent(image, destination)
     existing = validate_destination(image, parent, name)
