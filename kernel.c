@@ -356,7 +356,7 @@ static void print_help(void) {
     print_string("Files: dir/ls, cd, mkdir, touch, write, type/cat\n", 0x0E);
     print_string("       DIR /W shows a compact two-column directory view.\n", 0x0E);
     print_string("       open, read, close, copy, ren, move, del/rm\n", 0x0E);
-    print_string("System: ver, echo, history, clear, uptime, ticks\n", 0x0E);
+    print_string("System: ver, echo, history, clear, uptime, ticks, fscheck/chkdsk\n", 0x0E);
     print_string("        meminfo, physinfo, memtest, paging, vmtest, pfault, ps, usertest\n", 0x0E);
     print_string("Programs: install-demo, install-exec-test, install-args-test\n", 0x0E);
     print_string("          run <path> [args...]\n", 0x0E);
