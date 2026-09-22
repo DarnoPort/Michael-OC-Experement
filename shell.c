@@ -2750,7 +2750,7 @@ static int command_install_stdio_test(void) {
     );
     print_uint(image_size, 0x0F);
     print_string(
-        " bytes).\\n",
+        " bytes).\n",
         0x0A
     );
     return 1;
