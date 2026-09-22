@@ -130,13 +130,13 @@ disk-import: disk
 	@test -n "$(DEST)" || (echo "Usage: make disk-import FILE=host_file DEST=/disk/path"; exit 1)
 	python3 tools/diskfs_host.py --disk "$(DISK)" import "$(FILE)" "$(DEST)"
 
-disk-export:
+disk-export: disk
 	@test -n "$(SRC)" || (echo "Usage: make disk-export SRC=/disk/path FILE=host_file"; exit 1)
 	@test -n "$(FILE)" || (echo "Usage: make disk-export SRC=/disk/path FILE=host_file"; exit 1)
 	python3 tools/diskfs_host.py --disk "$(DISK)" export "$(SRC)" "$(FILE)"
 
 disk-ls: disk
-	python3 tools/diskfs_host.py --disk "$(DISK)" ls "$(PATH)"
+	python3 tools/diskfs_host.py --disk "$(DISK)" ls "$(DISK_PATH)"
 
 check: $(TARGET)
 	$(GRUB_FILE) --is-x86-multiboot $(TARGET)
