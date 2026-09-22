@@ -19,6 +19,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-multilib nasm binutils grub-pc-bin grub-common xorriso
 
+      - name: Check host tools
+        run: python3 -m py_compile tools/diskfs_host.py
+
       - name: Build kernel
         run: make clean && make
 
