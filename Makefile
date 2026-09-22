@@ -20,7 +20,7 @@ CFLAGS := -m32 -std=gnu99 -ffreestanding -fno-pie -fno-stack-protector -fno-asyn
 LDFLAGS := -m elf_i386 -T linker.ld
 OBJS := $(BUILD)/boot.o $(BUILD)/interrupts.o $(BUILD)/kernel.o $(BUILD)/terminal.o $(BUILD)/terminal_font.o $(BUILD)/memory.o $(BUILD)/paging.o $(BUILD)/process.o $(BUILD)/elf_loader.o $(BUILD)/syscalls.o $(BUILD)/ata.o $(BUILD)/diskfs.o $(BUILD)/vfs.o $(BUILD)/shell.o $(BUILD)/user_image.o $(BUILD)/user_exec_image.o $(BUILD)/user_args_image.o
 
-.PHONY: all iso disk disk-reset run check clean
+.PHONY: all iso disk disk-reset disk-import disk-export disk-ls run check clean
 
 all: $(TARGET)
 
@@ -124,6 +124,19 @@ disk:
 
 disk-reset:
 	rm -f "$(DISK)" nanoos.disk
+
+disk-import: disk
+	@test -n "$(FILE)" || (echo "Usage: make disk-import FILE=host_file DEST=/disk/path"; exit 1)
+	@test -n "$(DEST)" || (echo "Usage: make disk-import FILE=host_file DEST=/disk/path"; exit 1)
+	python3 tools/diskfs_host.py --disk "$(DISK)" import "$(FILE)" "$(DEST)"
+
+disk-export:
+	@test -n "$(SRC)" || (echo "Usage: make disk-export SRC=/disk/path FILE=host_file"; exit 1)
+	@test -n "$(FILE)" || (echo "Usage: make disk-export SRC=/disk/path FILE=host_file"; exit 1)
+	python3 tools/diskfs_host.py --disk "$(DISK)" export "$(SRC)" "$(FILE)"
+
+disk-ls: disk
+	python3 tools/diskfs_host.py --disk "$(DISK)" ls "$(PATH)"
 
 check: $(TARGET)
 	$(GRUB_FILE) --is-x86-multiboot $(TARGET)
