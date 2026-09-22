@@ -744,9 +744,15 @@ def command_check_elf(args: argparse.Namespace) -> None:
 
 def command_check_disk_elf(args: argparse.Namespace) -> None:
     image = load_image(Path(args.disk))
+    inode_number = resolve_node(image, args.source)
+    inode = unpack_inode(image, inode_number)
     payload = read_diskfs_file(image, args.source)
     info = parse_elf32(payload)
+    executable = bool(
+        inode["flags"] & DISKFS_FLAG_EXECUTABLE
+    )
     format_elf_info(Path(args.source), info)
+    print("File flag: " + ("EXECUTABLE" if executable else "NOT EXECUTABLE"))
 
 
 def command_export(args: argparse.Namespace) -> None:
