@@ -12,6 +12,7 @@
 
 SYS_EXIT   equ 0
 SYS_WRITE  equ 1
+SYS_FD_WRITE equ 11
 SYS_GETPID equ 2
 SYS_YIELD  equ 3
 SYS_SBRK        equ 4
@@ -69,9 +70,10 @@ user_program_start:
     mov byte [esi + 28], 0
 
     ; Write to the terminal.
-    mov eax, SYS_WRITE
-    mov ebx, esi
-    mov ecx, 2
+    mov eax, SYS_FD_WRITE
+    mov ebx, 1
+    mov ecx, esi
+    mov edx, 2
     int 0x80
 
     ; Open the process-private RAMFS file.
