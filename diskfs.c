@@ -47,6 +47,7 @@ static unsigned char bitmap[DISKFS_BITMAP_BYTES];
 static unsigned char sector_buffer[DISKFS_SECTOR_SIZE];
 static unsigned char inode_buffer[DISKFS_SECTOR_SIZE];
 static unsigned char copy_buffer[DISKFS_SECTOR_SIZE];
+static unsigned char check_bitmap[DISKFS_BITMAP_BYTES];
 
 static unsigned int min_u(
     unsigned int a,
@@ -1092,6 +1093,243 @@ int diskfs_truncate_file(
         );
         (void)bitmap_save();
     }
+
+    return 1;
+}
+
+
+static void check_bitmap_set(
+    unsigned int index
+) {
+    check_bitmap[index >> 3] |=
+        (unsigned char)(
+            1U << (index & 7U)
+        );
+}
+
+static int check_inode_parent_chain(
+    unsigned int inode_number
+) {
+    struct diskfs_inode inode;
+    unsigned int current = inode_number;
+
+    for (unsigned int depth = 0;
+         depth < DISKFS_MAX_INODES;
+         depth++) {
+        if (current == 0U) {
+            return 1;
+        }
+
+        if (!read_inode(current, &inode) ||
+            !inode.used ||
+            inode.parent >= DISKFS_MAX_INODES) {
+            return 0;
+        }
+
+        current = inode.parent;
+    }
+
+    return 0;
+}
+
+int diskfs_check(
+    struct diskfs_check_report* report
+) {
+    unsigned int actual_allocated = 0;
+    unsigned int referenced = 0;
+    unsigned int used_inodes = 0;
+    unsigned int errors = 0;
+
+    if (!diskfs_ready ||
+        !report) {
+        return 0;
+    }
+
+    zero_memory(
+        check_bitmap,
+        sizeof(check_bitmap)
+    );
+
+    for (unsigned int i = 0;
+         i < DISKFS_MAX_INODES;
+         i++) {
+        struct diskfs_inode inode;
+
+        if (!read_inode(i, &inode)) {
+            return 0;
+        }
+
+        if (!inode.used) {
+            continue;
+        }
+
+        used_inodes++;
+
+        if (i == 0U) {
+            if (inode.type != DISKFS_NODE_DIR ||
+                inode.parent != 0U ||
+                inode.name[0] != '/') {
+                errors++;
+            }
+            if (inode.size != 0U ||
+                inode.data_start != 0U ||
+                inode.data_sectors != 0U) {
+                errors++;
+            }
+            continue;
+        }
+
+        if ((inode.type != DISKFS_NODE_FILE &&
+             inode.type != DISKFS_NODE_DIR) ||
+            inode.parent >= DISKFS_MAX_INODES ||
+            inode.parent == i ||
+            !validate_node_name(inode.name)) {
+            errors++;
+            continue;
+        }
+
+        {
+            struct diskfs_inode parent;
+
+            if (!read_inode(
+                    inode.parent,
+                    &parent
+                ) ||
+                !parent.used ||
+                parent.type != DISKFS_NODE_DIR) {
+                errors++;
+            }
+        }
+
+        if (!check_inode_parent_chain(i)) {
+            errors++;
+        }
+
+        for (unsigned int other = i + 1U;
+             other < DISKFS_MAX_INODES;
+             other++) {
+            struct diskfs_inode candidate;
+
+            if (!read_inode(other, &candidate)) {
+                return 0;
+            }
+
+            if (candidate.used &&
+                candidate.parent == inode.parent &&
+                diskfs_name_equal(
+                    &candidate,
+                    inode.name
+                )) {
+                errors++;
+            }
+        }
+
+        if (inode.type == DISKFS_NODE_DIR) {
+            if (inode.size != 0U ||
+                inode.data_start != 0U ||
+                inode.data_sectors != 0U) {
+                errors++;
+            }
+            continue;
+        }
+
+        if (inode.size > DISKFS_MAX_FILE_SIZE) {
+            errors++;
+            continue;
+        }
+
+        {
+            unsigned int required =
+                inode.size == 0U
+                    ? 0U
+                    : (
+                        (inode.size +
+                         DISKFS_SECTOR_SIZE - 1U) /
+                        DISKFS_SECTOR_SIZE
+                    );
+
+            if (inode.data_sectors != required) {
+                errors++;
+                continue;
+            }
+
+            if (required == 0U) {
+                if (inode.data_start != 0U) {
+                    errors++;
+                }
+                continue;
+            }
+
+            if (inode.data_start < DISKFS_DATA_START ||
+                inode.data_start + required >
+                    DISKFS_TOTAL_SECTORS) {
+                errors++;
+                continue;
+            }
+
+            for (unsigned int sector = 0;
+                 sector < required;
+                 sector++) {
+                unsigned int absolute =
+                    inode.data_start + sector;
+                unsigned int index =
+                    absolute - DISKFS_DATA_START;
+
+                if (bitmap_bit_is_set(index)) {
+                    if (
+                        check_bitmap[index >> 3] &
+                        (unsigned char)(
+                            1U << (index & 7U)
+                        )
+                    ) {
+                        errors++;
+                    } else {
+                        check_bitmap_set(index);
+                        referenced++;
+                    }
+                } else {
+                    errors++;
+                    check_bitmap_set(index);
+                    referenced++;
+                }
+            }
+        }
+    }
+
+    for (unsigned int i = 0;
+         i < data_sector_count();
+         i++) {
+        if (bitmap_bit_is_set(i)) {
+            actual_allocated++;
+        }
+
+        if (
+            (bitmap_bit_is_set(i) ? 1U : 0U) !=
+            (
+                (check_bitmap[i >> 3] &
+                 (unsigned char)(
+                     1U << (i & 7U)
+                 )) != 0
+                    ? 1U
+                    : 0U
+            )
+        ) {
+            errors++;
+        }
+    }
+
+    for (unsigned int i = data_sector_count();
+         i < DISKFS_BITMAP_BYTES * 8U;
+         i++) {
+        if (bitmap_bit_is_set(i)) {
+            errors++;
+        }
+    }
+
+    report->used_inodes = used_inodes;
+    report->allocated_sectors = actual_allocated;
+    report->referenced_sectors = referenced;
+    report->errors = errors;
 
     return 1;
 }
