@@ -651,7 +651,14 @@ static void command_ls(const char* args) {
             0x0F
         );
         print_string("  ", 0x07);
-        print_string("FILE  ", 0x0E);
+        print_string(
+            vfs_node_is_executable(node)
+                ? "EXEC  "
+                : "FILE  ",
+            vfs_node_is_executable(node)
+                ? 0x0A
+                : 0x0E
+        );
 
         {
             unsigned int size =
@@ -2196,7 +2203,7 @@ static void command_help(
     } else if (shell_command_name_is(topic, "close")) {
         print_string("CLOSE <fd> - closes a shell file descriptor.\n", 0x0F);
     } else if (shell_command_name_is(topic, "run")) {
-        print_string("RUN <path> [args...] - loads and runs an ELF32 program.\n", 0x0F);
+        print_string("RUN <path> [args...] - loads and runs an executable file marked for execution.\n", 0x0F);
     } else if (shell_command_name_is(topic, "ver")) {
         print_string("VER - shows the current Michael OS version.\n", 0x0F);
     } else if (shell_command_name_is(topic, "history")) {
