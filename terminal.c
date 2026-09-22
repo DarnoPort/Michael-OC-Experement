@@ -387,7 +387,6 @@ static void redraw_input(void) {
     unsigned int end_row;
     unsigned int end_col;
     unsigned int clear_length;
-    unsigned int old_length;
 
     input_position_for_index(
         command_length,
@@ -414,8 +413,7 @@ static void redraw_input(void) {
         );
     }
 
-    old_length = command_length;
-    clear_length = old_length + 1U;
+    clear_length = TERMINAL_INPUT_MAX;
 
     /*
      * Clear the old rendered tail as well. The extra cell after
