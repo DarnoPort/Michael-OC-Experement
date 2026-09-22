@@ -435,7 +435,7 @@ static int shell_completion_path_command(const char* command) {
     static const char* names[] = {
         "ls", "cd", "mkdir", "touch", "cat", "type",
         "copy", "ren", "rename", "move", "open",
-        "rm", "del", "run", "dir"
+        "rm", "del", "run", "dir", "fscheck", "chkdsk"
     };
     for (unsigned int i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
         if (shell_command_name_is(command, names[i])) return 1;
@@ -1679,6 +1679,71 @@ static int command_diskinfo(void) {
     return 1;
 }
 
+
+static int command_fscheck(void) {
+    struct diskfs_check_report report;
+
+    if (!diskfs_check(&report)) {
+        print_error(
+            "fscheck: ",
+            "filesystem check unavailable."
+        );
+        return 0;
+    }
+
+    print_string(
+        "DiskFS check: ",
+        0x0E
+    );
+
+    if (report.errors == 0U) {
+        print_string(
+            "PASS",
+            0x0A
+        );
+    } else {
+        print_string(
+            "FAILED",
+            0x0C
+        );
+    }
+
+    print_string(
+        "\nUsed inodes: ",
+        0x07
+    );
+    shell_print_uint(
+        report.used_inodes
+    );
+    print_string(
+        "\nAllocated data sectors: ",
+        0x07
+    );
+    shell_print_uint(
+        report.allocated_sectors
+    );
+    print_string(
+        "\nReferenced data sectors: ",
+        0x07
+    );
+    shell_print_uint(
+        report.referenced_sectors
+    );
+    print_string(
+        "\nErrors: ",
+        0x07
+    );
+    shell_print_uint(
+        report.errors
+    );
+    print_char(
+        '\n',
+        0x07
+    );
+
+    return report.errors == 0U;
+}
+
 static int command_fstest(void) {
     static const char message[] =
         "Hello Michael OS Phase 18!";
@@ -2133,6 +2198,9 @@ static void command_help(
         print_string("FSTEST - checks basic VFS/DiskFS file operations.\n", 0x0F);
     } else if (shell_command_name_is(topic, "diskinfo")) {
         print_string("DISKINFO - shows basic DiskFS storage statistics.\n", 0x0F);
+    } else if (shell_command_name_is(topic, "fscheck") ||
+               shell_command_name_is(topic, "chkdsk")) {
+        print_string("FSCHECK/CHKDSK - validates DiskFS inode metadata and data-sector allocation.\n", 0x0F);
     } else if (shell_command_name_is(topic, "install-demo")) {
         print_string("INSTALL-DEMO - installs the embedded demo ELF on DiskFS.\n", 0x0F);
     } else if (shell_command_name_is(topic, "install-exec-test")) {
