@@ -390,6 +390,231 @@ static void shell_print_spaces(
     }
 }
 
+static int shell_prefix_equal(const char* value, const char* prefix) {
+    unsigned int i = 0;
+    if (!value || !prefix) return 0;
+    while (prefix[i] != '\0') {
+        if (value[i] == '\0' ||
+            shell_lower_char(value[i]) != shell_lower_char(prefix[i])) {
+            return 0;
+        }
+        i++;
+    }
+    return 1;
+}
+
+static int shell_first_token(const char* command, unsigned int length, char* token, unsigned int token_size) {
+    unsigned int i = 0, out = 0;
+    if (!command || !token || token_size < 2U) return 0;
+    while (i < length && (command[i] == ' ' || command[i] == '\t')) i++;
+    while (i < length && command[i] != ' ' && command[i] != '\t') {
+        if (out + 1U >= token_size) return 0;
+        token[out++] = command[i++];
+    }
+    token[out] = '\0';
+    return out > 0U;
+}
+
+static unsigned int shell_completion_token_start(const char* command, unsigned int length) {
+    int in_quotes = 0;
+    unsigned int start = 0;
+    for (unsigned int i = 0; i < length; i++) {
+        if (command[i] == '"') {
+            in_quotes = !in_quotes;
+            start = i + 1U;
+            continue;
+        }
+        if (!in_quotes && (command[i] == ' ' || command[i] == '\t')) {
+            start = i + 1U;
+        }
+    }
+    return start;
+}
+
+static int shell_completion_path_command(const char* command) {
+    static const char* names[] = {
+        "ls", "cd", "mkdir", "touch", "cat", "type",
+        "copy", "ren", "rename", "move", "open",
+        "rm", "del", "run", "dir"
+    };
+    for (unsigned int i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+        if (shell_command_name_is(command, names[i])) return 1;
+    }
+    return 0;
+}
+
+static void shell_completion_replace(const char* command, unsigned int token_start, const char* replacement, int append_space) {
+    char result[TERMINAL_INPUT_MAX];
+    unsigned int length = 0, replacement_length = 0;
+    if (!command || !replacement) return;
+    while (length < token_start && command[length] != '\0') {
+        if (length + 1U >= sizeof(result)) return;
+        result[length] = command[length++];
+    }
+    while (replacement[replacement_length] != '\0') {
+        replacement_length++;
+        if (replacement_length >= sizeof(result)) return;
+    }
+    for (unsigned int i = 0; i < replacement_length; i++) {
+        if (length + i + 1U >= sizeof(result)) return;
+        result[length + i] = replacement[i];
+    }
+    length += replacement_length;
+    if (append_space) {
+        if (length + 1U >= sizeof(result)) return;
+        result[length++] = ' ';
+    }
+    result[length] = '\0';
+    terminal_replace_command(result);
+}
+
+static void shell_print_completion_matches(const char* command, const char* const* matches, const unsigned char* match_is_dir, unsigned int match_count) {
+    print_char('\n', 0x07);
+    for (unsigned int i = 0; i < match_count; i++) {
+        print_string(match_is_dir[i] ? "[DIR] " : "[FILE] ", 0x07);
+        print_string(matches[i], 0x0F);
+        print_char('\n', 0x07);
+    }
+    terminal_prompt();
+    terminal_replace_command(command);
+}
+
+static void shell_complete_commands(const char* command, unsigned int length, unsigned int token_start) {
+    static const char* names[] = {
+        "help", "echo", "pwd", "ls", "cd", "mkdir", "touch", "write",
+        "cat", "copy", "ren", "rename", "move", "open", "read", "close",
+        "rm", "del", "history", "ver", "dir", "type", "diskinfo", "run",
+        "layout", "fstest", "install-demo", "install-exec-test",
+        "install-args-test", "clear", "cls", "uptime", "ticks", "meminfo",
+        "physinfo", "memtest", "paging", "vmtest", "pfault", "ps",
+        "usertest", "sleep"
+    };
+    const char* matches[48];
+    unsigned char match_is_dir[48];
+    char prefix[TERMINAL_INPUT_MAX];
+    unsigned int prefix_length = 0, match_count = 0;
+    if (token_start > length) return;
+    for (unsigned int i = token_start; i < length && prefix_length + 1U < sizeof(prefix); i++)
+        prefix[prefix_length++] = command[i];
+    prefix[prefix_length] = '\0';
+    for (unsigned int i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+        if (shell_prefix_equal(names[i], prefix)) {
+            matches[match_count] = names[i];
+            match_is_dir[match_count] = 0;
+            match_count++;
+        }
+    }
+    if (match_count == 1U) {
+        shell_completion_replace(command, token_start, matches[0], 1);
+    } else if (match_count > 1U) {
+        shell_print_completion_matches(command, matches, match_is_dir, match_count);
+    }
+}
+
+static void shell_complete_path(const char* command, unsigned int token_start) {
+    char partial[VFS_PATH_MAX];
+    char parent_input[VFS_PATH_MAX];
+    char parent_path[VFS_PATH_MAX];
+    char prefix[VFS_NAME_MAX];
+    char full[TERMINAL_INPUT_MAX];
+    const char* token = command + token_start;
+    unsigned int partial_length = 0, prefix_length = 0;
+    int last_slash = -1;
+    struct vfs_node* parent = 0;
+    struct vfs_node* unique = 0;
+    struct vfs_node* child;
+    const char* matches[48];
+    unsigned char match_is_dir[48];
+    unsigned int match_count = 0;
+
+    while (token[partial_length] != '\0' && partial_length + 1U < sizeof(partial)) {
+        partial[partial_length] = token[partial_length++];
+    }
+    partial[partial_length] = '\0';
+
+    for (unsigned int i = 0; i < partial_length; i++)
+        if (partial[i] == '/') last_slash = (int)i;
+
+    if (last_slash >= 0) {
+        unsigned int parent_length = (unsigned int)last_slash + 1U;
+        if (parent_length >= sizeof(parent_input)) return;
+        for (unsigned int i = 0; i < parent_length; i++) parent_input[i] = partial[i];
+        parent_input[parent_length] = '\0';
+        if (!make_path(parent_input, parent_path)) return;
+        for (unsigned int i = parent_length; i < partial_length && prefix_length + 1U < sizeof(prefix); i++)
+            prefix[prefix_length++] = partial[i];
+        prefix[prefix_length] = '\0';
+    } else {
+        shell_copy(parent_path, shell_cwd, sizeof(parent_path));
+        shell_copy(prefix, partial, sizeof(prefix));
+        prefix_length = shell_length(prefix);
+    }
+
+    parent = vfs_lookup(parent_path);
+    if (!parent || !vfs_node_is_directory(parent)) return;
+    child = vfs_node_first_child(parent);
+    while (child) {
+        if (shell_prefix_equal(vfs_node_name(child), prefix) && match_count < 48U) {
+            matches[match_count] = vfs_node_name(child);
+            match_is_dir[match_count] = (unsigned char)vfs_node_is_directory(child);
+            unique = child;
+            match_count++;
+        }
+        child = vfs_node_next_sibling(child);
+    }
+
+    if (match_count == 1U && unique) {
+        unsigned int full_length = 0;
+        unsigned int name_start = last_slash >= 0 ? (unsigned int)last_slash + 1U : 0U;
+        for (unsigned int i = 0; i < token_start; i++) {
+            if (full_length + 1U >= sizeof(full)) return;
+            full[full_length++] = command[i];
+        }
+        for (unsigned int i = 0; i < name_start; i++) {
+            if (full_length + 1U >= sizeof(full)) return;
+            full[full_length++] = partial[i];
+        }
+        for (unsigned int i = 0; matches[0][i] != '\0'; i++) {
+            if (full_length + 1U >= sizeof(full)) return;
+            full[full_length++] = matches[0][i];
+        }
+        if (vfs_node_is_directory(unique)) {
+            if (full_length + 1U >= sizeof(full)) return;
+            full[full_length++] = '/';
+        } else {
+            if (full_length + 1U >= sizeof(full)) return;
+            full[full_length++] = ' ';
+        }
+        full[full_length] = '\0';
+        terminal_replace_command(full);
+    } else if (match_count > 1U) {
+        shell_print_completion_matches(command, matches, match_is_dir, match_count);
+    }
+}
+
+void shell_handle_tab_completion(void) {
+    const char* command = terminal_get_command();
+    unsigned int length = terminal_command_length();
+    char first_token[64];
+    unsigned int token_start;
+    if (!command) return;
+    token_start = shell_completion_token_start(command, length);
+    if (token_start == 0U) {
+        shell_complete_commands(command, length, 0);
+        return;
+    }
+    if (!shell_first_token(command, length, first_token, sizeof(first_token))) return;
+    if (shell_command_name_is(first_token, "help")) {
+        shell_complete_commands(command, length, token_start);
+        return;
+    }
+    if (shell_completion_path_command(first_token)) {
+        const char* token = command + token_start;
+        if (shell_command_name_is(first_token, "dir") &&
+            token[0] == '/' && (token[1] == 'w' || token[1] == 'W') && token[2] == '\0') return;
+        shell_complete_path(command, token_start);
+    }
+}
 static void print_error(
     const char* command,
     const char* message
@@ -2295,6 +2520,7 @@ int shell_init(void) {
     shell_cwd[1] = '\0';
 
     shell_update_prompt();
+    terminal_set_tab_handler(shell_handle_tab_completion);
 
     return 1;
 }

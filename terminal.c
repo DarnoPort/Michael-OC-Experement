@@ -14,6 +14,7 @@ static char prompt_text[TERMINAL_PROMPT_MAX];
 static unsigned int command_length = 0;
 static unsigned int cursor_index = 0;
 static int command_ready = 0;
+static terminal_tab_handler_t tab_handler = 0;
 
 static char history[TERMINAL_HISTORY_MAX][TERMINAL_INPUT_MAX];
 static unsigned int history_count = 0;
@@ -802,8 +803,23 @@ static void backspace_character(void) {
     redraw_input();
 }
 
-void terminal_set_prompt(const char* prompt) {
-    unsigned int i = 0;
+void terminal_set_tab_handler(terminal_tab_handler_t handler) {
+    tab_handler = handler;
+}
+
+void terminal_replace_command(const char* source) {
+    if (!source) {
+        return;
+    }
+
+    copy_text(command_buffer, source);
+    command_length = input_text_length();
+    cursor_index = command_length;
+    reset_history_navigation();
+    redraw_input();
+}
+
+void terminal_set_prompt(const char* prompt) {    unsigned int i = 0;
 
     if (!prompt || *prompt == '\0') {
         prompt_text[0] = '>';
@@ -1281,6 +1297,19 @@ void terminal_keyboard_scancode(
         return;
     }
 
+    if (scancode == 0x0FU) {
+        if (tab_handler &&
+            cursor_index == command_length) {
+            tab_handler();
+        } else {
+            insert_character(' ');
+            insert_character(' ');
+            insert_character(' ');
+            insert_character(' ');
+        }
+        return;
+    }
+
     {
         char character =
             scancode_to_ascii(scancode);
@@ -1393,6 +1422,7 @@ void terminal_init(void) {
     language_layout = 0;
     layout_switch_latch = 0;
     command_buffer[0] = 0;
+    tab_handler = 0;
     scrollback_count = 0;
     scrollback_start = 0;
     view_offset = 0;

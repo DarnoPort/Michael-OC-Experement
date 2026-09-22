@@ -17,7 +17,11 @@ void print_uint(unsigned int value, unsigned char color);
 void print_hex32(unsigned int value, unsigned char color);
 void print_hex64(unsigned int high, unsigned int low, unsigned char color);
 
+typedef void (*terminal_tab_handler_t)(void);
+
 void terminal_set_prompt(const char* prompt);
+void terminal_set_tab_handler(terminal_tab_handler_t handler);
+void terminal_replace_command(const char* command);
 void terminal_prompt(void);
 void terminal_keyboard_scancode(unsigned char scancode);
 
