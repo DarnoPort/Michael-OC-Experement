@@ -451,7 +451,8 @@ static void shell_completion_replace(const char* command, unsigned int token_sta
     if (!command || !replacement) return;
     while (length < token_start && command[length] != '\0') {
         if (length + 1U >= sizeof(result)) return;
-        result[length] = command[length++];
+        result[length] = command[length];
+        length++;
     }
     while (replacement[replacement_length] != '\0') {
         replacement_length++;
@@ -531,7 +532,8 @@ static void shell_complete_path(const char* command, unsigned int token_start) {
     unsigned int match_count = 0;
 
     while (token[partial_length] != '\0' && partial_length + 1U < sizeof(partial)) {
-        partial[partial_length] = token[partial_length++];
+        partial[partial_length] = token[partial_length];
+        partial_length++;
     }
     partial[partial_length] = '\0';
 
@@ -2233,6 +2235,8 @@ static void command_help(
         print_string("INSTALL-EXEC-TEST - installs the embedded exec() test ELF.\n", 0x0F);
     } else if (shell_command_name_is(topic, "install-args-test")) {
         print_string("INSTALL-ARGS-TEST - installs the embedded argc/argv test ELF.\n", 0x0F);
+    } else if (shell_command_name_is(topic, "install-stdio-test")) {
+        print_string("INSTALL-STDIO-TEST - installs the embedded stdin/stdout test ELF.\n", 0x0F);
     } else if (shell_command_name_is(topic, "meminfo") ||
                shell_command_name_is(topic, "physinfo") ||
                shell_command_name_is(topic, "memtest") ||
@@ -2746,7 +2750,7 @@ static int command_install_stdio_test(void) {
     );
     print_uint(image_size, 0x0F);
     print_string(
-        " bytes).\n",
+        " bytes).\\n",
         0x0A
     );
     return 1;
@@ -3106,6 +3110,16 @@ int shell_handle_command(
         ) &&
         *skip_spaces(args) == '\0') {
         command_install_args_test();
+        return 1;
+    }
+
+    if (command_args(
+            command,
+            "install-stdio-test",
+            &args
+        ) &&
+        *skip_spaces(args) == '\0') {
+        command_install_stdio_test();
         return 1;
     }
 
