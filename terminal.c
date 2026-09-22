@@ -43,6 +43,9 @@ static struct terminal_cell scrollback[
 static unsigned int scrollback_count = 0;
 static unsigned int scrollback_start = 0;
 static unsigned int view_offset = 0;
+static unsigned short view_snapshot[
+    TERMINAL_HEIGHT * TERMINAL_WIDTH
+];
 static unsigned char cursor_start_value = 0x0EU;
 
 static inline void outb(
@@ -208,27 +211,105 @@ static void scrollback_store_row(unsigned int row) {
     }
 }
 
+static void scrollback_snapshot_current_screen(void) {
+    for (unsigned int i = 0;
+         i < TERMINAL_HEIGHT * TERMINAL_WIDTH;
+         i++) {
+        view_snapshot[i] = vga_buffer[i];
+    }
+}
+
+static void scrollback_restore_snapshot(void) {
+    for (unsigned int i = 0;
+         i < TERMINAL_HEIGHT * TERMINAL_WIDTH;
+         i++) {
+        vga_buffer[i] = view_snapshot[i];
+    }
+}
+
 static void scrollback_render_view(void) {
-    unsigned int total_rows = scrollback_count + TERMINAL_HEIGHT;
+    unsigned int total_rows =
+        scrollback_count + TERMINAL_HEIGHT;
+    unsigned int end_row;
     unsigned int start_row;
-    if (view_offset > scrollback_count) view_offset = scrollback_count;
-    start_row = (view_offset > 0U)
-        ? total_rows - TERMINAL_HEIGHT - view_offset
-        : total_rows - TERMINAL_HEIGHT;
-    for (unsigned int screen_row = 0; screen_row < TERMINAL_HEIGHT; screen_row++) {
-        unsigned int logical_row = start_row + screen_row;
+
+    if (view_offset > scrollback_count) {
+        view_offset = scrollback_count;
+    }
+
+    /*
+     * view_offset is the distance from the live screen in rows.
+     * The last part of the logical stream is the saved live screen.
+     */
+    end_row =
+        total_rows - view_offset;
+
+    if (end_row >= TERMINAL_HEIGHT) {
+        start_row =
+            end_row - TERMINAL_HEIGHT;
+    } else {
+        start_row = 0;
+    }
+
+    for (unsigned int screen_row = 0;
+         screen_row < TERMINAL_HEIGHT;
+         screen_row++) {
+        unsigned int logical_row =
+            start_row + screen_row;
+
         if (logical_row < scrollback_count) {
-            unsigned int index = (scrollback_start + logical_row) % TERMINAL_SCROLLBACK_MAX;
-            for (unsigned int col = 0; col < TERMINAL_WIDTH; col++) {
-                vga_buffer[screen_row * TERMINAL_WIDTH + col] =
-                    (unsigned short)(unsigned char)scrollback[index][col].character |
-                    ((unsigned short)scrollback[index][col].color << 8);
+            unsigned int index =
+                (scrollback_start + logical_row) %
+                TERMINAL_SCROLLBACK_MAX;
+
+            for (unsigned int col = 0;
+                 col < TERMINAL_WIDTH;
+                 col++) {
+                vga_buffer[
+                    screen_row * TERMINAL_WIDTH + col
+                ] =
+                    (unsigned short)(
+                        (unsigned char)
+                            scrollback[index][col].character
+                    ) |
+                    ((unsigned short)
+                        scrollback[index][col].color << 8);
             }
-        } else {
-            unsigned int current_row = logical_row - scrollback_count;
-            for (unsigned int col = 0; col < TERMINAL_WIDTH; col++) {
-                vga_buffer[screen_row * TERMINAL_WIDTH + col] =
-                    vga_buffer[current_row * TERMINAL_WIDTH + col];
+
+            continue;
+        }
+
+        {
+            unsigned int snapshot_row =
+                logical_row - scrollback_count;
+
+            if (snapshot_row >= TERMINAL_HEIGHT) {
+                /*
+                 * This can happen only when the oldest requested
+                 * view would begin before the available history.
+                 * Fill the unused area with blank cells.
+                 */
+                for (unsigned int col = 0;
+                     col < TERMINAL_WIDTH;
+                     col++) {
+                    vga_buffer[
+                        screen_row * TERMINAL_WIDTH + col
+                    ] =
+                        (unsigned short)' ' |
+                        (0x07 << 8);
+                }
+                continue;
+            }
+
+            for (unsigned int col = 0;
+                 col < TERMINAL_WIDTH;
+                 col++) {
+                vga_buffer[
+                    screen_row * TERMINAL_WIDTH + col
+                ] =
+                    view_snapshot[
+                        snapshot_row * TERMINAL_WIDTH + col
+                    ];
             }
         }
     }
@@ -236,8 +317,9 @@ static void scrollback_render_view(void) {
 
 static void terminal_follow_bottom(void) {
     if (view_offset == 0U) return;
+
     view_offset = 0;
-    scrollback_render_view();
+    scrollback_restore_snapshot();
     terminal_set_cursor_visible(1);
     terminal_update_cursor();
 }
@@ -1010,12 +1092,19 @@ void terminal_keyboard_scancode(
         }
 
         if (code == 0x49U) {
-            if (scrollback_count > 0U && view_offset < scrollback_count) {
+            if (scrollback_count > 0U) {
                 unsigned int page = TERMINAL_HEIGHT;
-                view_offset =
-                    (view_offset + page > scrollback_count)
-                        ? scrollback_count
-                        : view_offset + page;
+
+                if (view_offset == 0U) {
+                    scrollback_snapshot_current_screen();
+                }
+
+                if (view_offset + page > scrollback_count) {
+                    view_offset = scrollback_count;
+                } else {
+                    view_offset += page;
+                }
+
                 scrollback_render_view();
                 terminal_set_cursor_visible(0);
             }
@@ -1025,11 +1114,9 @@ void terminal_keyboard_scancode(
         if (code == 0x51U) {
             if (view_offset > 0U) {
                 unsigned int page = TERMINAL_HEIGHT;
+
                 if (view_offset <= page) {
-                    view_offset = 0;
-                    scrollback_render_view();
-                    terminal_set_cursor_visible(1);
-                    terminal_update_cursor();
+                    terminal_follow_bottom();
                 } else {
                     view_offset -= page;
                     scrollback_render_view();
@@ -1309,6 +1396,11 @@ void terminal_init(void) {
     scrollback_count = 0;
     scrollback_start = 0;
     view_offset = 0;
+    for (unsigned int i = 0;
+         i < TERMINAL_HEIGHT * TERMINAL_WIDTH;
+         i++) {
+        view_snapshot[i] = 0;
+    }
 
     outb(0x3D4, 0x0A);
     cursor_start_value = inb(0x3D5);
